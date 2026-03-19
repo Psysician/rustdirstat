@@ -49,16 +49,21 @@ rustdirstat/
 - `FileNode` — represents a file or directory: name, size, metadata, children indices, parent index
 - `DirTree` — arena-allocated tree (`Vec<FileNode>` with index-based references). Provides traversal, subtree size computation, path reconstruction
 - `ExtensionStats` — per-extension aggregation: count, total size, percentage, assigned color
-- `ScanEvent` — enum streamed from scanner to GUI: `DirScanned { path, node_index }`, `Progress { files_scanned, bytes_scanned }`, `DuplicateFound { hash, indices }`, `ScanComplete`, `ScanError { path, error }`
-- `ScanConfig` — scan parameters: root path, follow symlinks, exclude patterns, hash duplicates toggle
+- `ScanEvent` — enum streamed from scanner to GUI:
+  - `NodeDiscovered { node: FileNode, parent_index: Option<usize> }` — carries full node data so the GUI can insert it into its own arena. The `parent_index` refers to the GUI-side arena index (scanner maps its own indices to GUI indices via a lookup table sent back through a response channel, or the GUI assigns indices on insertion and the scanner tracks the mapping internally)
+  - `Progress { files_scanned: u64, bytes_scanned: u64 }`
+  - `DuplicateFound { hash: [u8; 32], node_indices: Vec<usize> }` — indices refer to GUI-side arena
+  - `ScanComplete { stats: ScanStats }` — final summary with total files, dirs, bytes, duration
+  - `ScanError { path: PathBuf, error: String }` — error serialized to String for Send safety
+- `ScanConfig` — scan parameters: root path, follow symlinks, exclude patterns, hash duplicates toggle, `max_nodes: Option<usize>` (default: 10_000_000 — scan aborts with `ScanError` if exceeded)
 
 **rds-scanner** — Depends on rds-core, jwalk, rayon, sha2, crossbeam-channel. Provides:
-- `Scanner::scan(config, sender)` — spawns jwalk parallel walk on a background thread. Builds `DirTree` incrementally, sends `ScanEvent`s through crossbeam channel. Returns `JoinHandle`
-- `DuplicateDetector::find_duplicates(tree)` — groups files by size, then hashes candidates in parallel with rayon. Sends `DuplicateFound` events
-- Respects permission errors gracefully (logs and continues)
+- `Scanner::scan(config, sender, cancel: Arc<AtomicBool>)` — spawns jwalk parallel walk on a background thread. For each discovered entry, sends a `NodeDiscovered` event with full `FileNode` data through the crossbeam channel. The cancel flag is checked in jwalk's `process_read_dir` callback; when set to `true`, the walk stops and the thread exits cleanly. Returns `JoinHandle`
+- `DuplicateDetector::find_duplicates(tree, sender)` — called on the same scanner thread after the walk completes (before the sender is dropped). Groups files by size, hashes candidates in parallel via rayon, sends `DuplicateFound` events through the same channel. Only after this completes does the thread send `ScanComplete` and exit
+- Respects permission errors gracefully (logs via tracing and sends `ScanError` event, continues scan)
 
-**rds-gui** — Depends on rds-core, eframe/egui, streemap. Provides:
-- `RustDirStatApp` — main egui app. Holds `DirTree`, receives `ScanEvent`s each frame via `try_recv()` on crossbeam channel
+**rds-gui** — Depends on rds-core, eframe/egui, streemap, crossbeam-channel. Provides:
+- `RustDirStatApp` — main egui app. Owns a `DirTree` arena and a crossbeam `Receiver<ScanEvent>`. Each frame calls `try_recv()` in a loop (bounded to ~100 events per frame to avoid blocking rendering). On `NodeDiscovered`, inserts the `FileNode` into its own arena and updates parent-child links via `parent_index`. On re-scan, sets the cancel flag on the old scanner, drains/discards remaining events, resets the tree, and launches a new scan
 - `TreemapRenderer` — takes a `DirTree` subtree, computes squarified layout via `streemap`, renders cushion-shaded colored rectangles using egui `Painter`. Handles click (select node), hover (tooltip with path/size), right-click (context menu), zoom (double-click to drill into subdirectory)
 - `TreeView` — renders expandable directory tree sorted by size descending. Clicking a node selects it in treemap and ext stats
 - `ExtStatsPanel` — shows extension breakdown: colored bars, file count, total size, percentage. Clicking an extension highlights all files of that type in treemap
@@ -70,28 +75,39 @@ rustdirstat/
 User selects path
        |
        v
-Scanner::scan(config, tx)          # background thread
+main.rs creates crossbeam channel (tx, rx)
+main.rs creates Arc<AtomicBool> cancel flag
        |
-  jwalk parallel walk
+       v
+Scanner::scan(config, tx, cancel)     # spawns background thread
        |
-  builds DirTree + sends ScanEvents --> crossbeam channel
-                                              |
-                                              v
-                                    RustDirStatApp::update()  # GUI thread, each frame
-                                              |
-                                         try_recv() loop
-                                              |
-                                    merge events into DirTree
-                                              |
-                                    recompute treemap layout (if dirty)
-                                              |
-                                    render 3 panels
+  jwalk parallel walk (checks cancel flag in process_read_dir)
+       |
+  sends NodeDiscovered events ------> crossbeam channel
+       |                                      |
+  walk completes                              v
+       |                            RustDirStatApp::update()  # GUI thread
+  DuplicateDetector runs                      |
+  (same thread, same tx)             try_recv() loop (max 100/frame)
+       |                                      |
+  sends DuplicateFound events ------> inserts FileNode into GUI-side DirTree
+       |                                      |
+  sends ScanComplete                 recompute treemap layout (if dirty)
+       |                                      |
+  thread exits, tx dropped           render 3 panels
+
+On re-scan:
+  1. Set cancel flag on old scanner
+  2. Drain/discard old channel
+  3. Reset DirTree
+  4. Create new channel + cancel flag
+  5. Launch new Scanner::scan
 ```
 
 ### Treemap Rendering
 
 1. **Layout:** `streemap::Squarified` computes rectangles from `DirTree` children sizes
-2. **Cushion shading:** Each rectangle gets a gradient based on directory depth. Deeper = darker edges, lighter center. Implemented via egui `Painter::rect_filled()` with computed color gradients
+2. **Cushion shading:** Each rectangle gets a per-pixel intensity gradient based on directory depth using the cushion function `I(x,y) = Ix*(x-cx)^2 + Iy*(y-cy)^2` attenuated by a light vector. Implemented via egui `Painter::add(Shape::Mesh(...))` — each treemap rectangle is decomposed into a grid of triangulated quads with per-vertex colors computed from the cushion function. This produces the characteristic convex 3D highlight effect matching WinDirStat. For small rectangles (<4px), falls back to flat `rect_filled()` for performance
 3. **Colors:** Each file extension gets a deterministic HSL color (hash extension string to hue, fixed saturation/lightness). Colors stored in `ExtensionStats`
 4. **Interaction:** Click selects node (highlights in tree + ext stats). Hover shows tooltip (path, size, modified date). Double-click drills into directory. Right-click opens context menu (delete, open, copy path)
 5. **Performance:** Cache treemap layout. Only recompute when tree changes (during scan) or window resizes. For trees with >50k visible rectangles, aggregate small files into "other" bucket
@@ -122,9 +138,10 @@ Scanner::scan(config, tx)          # background thread
 | sha2 | 0.10+ | SHA-256 for duplicate detection |
 | clap | 4.x | CLI argument parsing |
 | serde + serde_json + csv | latest | Export functionality |
-| trash | 5.x | Cross-platform recycle bin delete |
+| trash | 4.x | Cross-platform recycle bin delete |
 | open | 5.x | Open file manager / URLs |
 | directories | 5.x | Platform config/cache dirs |
+| toml | 0.8+ | Config file parsing (TOML format) |
 | tracing | 0.1+ | Structured logging |
 
 ## Testing Strategy
@@ -140,7 +157,7 @@ Scanner::scan(config, tx)          # background thread
 - Permission denied on directory: log warning via `tracing::warn!`, skip directory, continue scan
 - File disappeared during scan (race condition): log, skip, continue
 - Hash I/O error: skip file for duplicate detection, report in UI
-- Out of memory: not handled explicitly (in-memory tree assumption). Document recommended max scan sizes
+- Node limit exceeded: scan aborts with `ScanError` when `max_nodes` (default 10M) is reached. GUI shows error message with suggestion to scan a subdirectory instead. Estimated memory per node: ~200 bytes, so 10M nodes ~ 2GB RAM
 
 ## Configuration
 
@@ -150,4 +167,4 @@ Stored in platform-appropriate config directory via `directories` crate:
 - UI preferences: treemap color scheme, default sort order
 - Last scanned paths (recent history)
 
-Format: TOML via `toml` crate
+Format: TOML via `toml` crate. Config loading owned by the binary crate (`main.rs`), passed to `RustDirStatApp` at initialization. rds-core defines the `AppConfig` struct (serde-deserializable); main.rs handles file I/O via `toml` + `directories` crates
