@@ -8,7 +8,7 @@ Rust rewrite of WinDirStat. Each milestone gets its own detailed implementation 
 
 ---
 
-## MS1 — Workspace Scaffold & CI
+## ~~MS1 — Workspace Scaffold & CI~~ DONE
 
 Set up Cargo workspace with 4 crates (rds-core, rds-scanner, rds-gui, binary). Cargo.toml with all dependencies declared. Basic `main.rs` that opens an empty egui window. GitHub Actions CI with build + test matrix (ubuntu, macos, windows). Makefile or justfile with common commands.
 
