@@ -43,6 +43,10 @@ pub struct RustDirStatApp {
     /// Text input for typing a path directly (fallback for WSL2/Wayland
     /// where rfd native dialogs crash the X11 connection).
     path_input: String,
+    /// Validation error shown in toolbar when user enters an invalid path.
+    path_error: Option<String>,
+    /// Running count of ScanError events received during the current scan.
+    scan_errors: u64,
 }
 
 impl Default for RustDirStatApp {
@@ -68,6 +72,8 @@ impl RustDirStatApp {
             scan_path: None,
             initial_path,
             path_input: String::new(),
+            path_error: None,
+            scan_errors: 0,
         }
     }
 
@@ -101,6 +107,8 @@ impl RustDirStatApp {
         self.tree = None;
         self.files_scanned = 0;
         self.bytes_scanned = 0;
+        self.scan_errors = 0;
+        self.path_error = None;
         self.phase = ScanPhase::Scanning;
         self.scan_path = Some(path.clone());
 
@@ -117,6 +125,18 @@ impl RustDirStatApp {
         self.receiver = Some(rx);
         self.cancel = Some(cancel);
         self.scan_handle = Some(handle);
+    }
+
+    /// Transitions to Complete, drops the channel, and joins the scanner
+    /// thread. The scanner sends `ScanComplete` as its last act, so the
+    /// join completes promptly without blocking the GUI frame.
+    fn finish_scan(&mut self, stats: ScanStats) {
+        self.phase = ScanPhase::Complete(stats);
+        self.receiver = None;
+        self.cancel = None;
+        if let Some(handle) = self.scan_handle.take() {
+            let _ = handle.join();
+        }
     }
 
     /// Drains up to 100 ScanEvent values from the channel per frame.
@@ -155,32 +175,24 @@ impl RustDirStatApp {
                     self.bytes_scanned = bytes_scanned;
                 }
                 Ok(ScanEvent::ScanComplete { stats }) => {
-                    self.phase = ScanPhase::Complete(stats);
-                    self.receiver = None;
-                    self.cancel = None;
-                    if let Some(handle) = self.scan_handle.take() {
-                        let _ = handle.join();
-                    }
+                    self.finish_scan(stats);
                     return;
                 }
-                Ok(ScanEvent::ScanError { .. }) => {}
+                Ok(ScanEvent::ScanError { .. }) => {
+                    self.scan_errors += 1;
+                }
                 Ok(ScanEvent::DuplicateFound { .. }) => {}
                 Err(crossbeam_channel::TryRecvError::Empty) => return,
                 Err(crossbeam_channel::TryRecvError::Disconnected) => {
                     // Scanner thread exited without ScanComplete (shouldn't
                     // happen, but handle gracefully).
-                    self.phase = ScanPhase::Complete(ScanStats {
+                    self.finish_scan(ScanStats {
                         total_files: 0,
                         total_dirs: 0,
                         total_bytes: 0,
                         duration_ms: 0,
-                        errors: 0,
+                        errors: self.scan_errors,
                     });
-                    self.receiver = None;
-                    self.cancel = None;
-                    if let Some(handle) = self.scan_handle.take() {
-                        let _ = handle.join();
-                    }
                     return;
                 }
             }
@@ -235,11 +247,16 @@ impl eframe::App for RustDirStatApp {
                 ui.separator();
 
                 // Text input fallback — always works, including WSL2.
+                // Reserve ~60px for the Scan button; fill remaining width.
+                let text_width = (ui.available_width() - 60.0).max(100.0);
                 let response = ui.add(
                     egui::TextEdit::singleline(&mut self.path_input)
                         .hint_text("/path/to/scan")
-                        .desired_width(400.0),
+                        .desired_width(text_width),
                 );
+                if response.changed() {
+                    self.path_error = None;
+                }
                 let scan_clicked = ui.button("Scan").clicked();
                 let enter_pressed = response.lost_focus()
                     && ui.input(|i| i.key_pressed(egui::Key::Enter));
@@ -247,8 +264,15 @@ impl eframe::App for RustDirStatApp {
                 if (scan_clicked || enter_pressed) && !self.path_input.is_empty() {
                     let path = PathBuf::from(&self.path_input);
                     if path.is_dir() {
+                        self.path_error = None;
                         self.start_scan(path);
+                    } else {
+                        self.path_error = Some("Not a valid directory.".to_string());
                     }
+                }
+
+                if let Some(ref err) = self.path_error {
+                    ui.colored_label(egui::Color32::from_rgb(255, 100, 100), err);
                 }
             });
         });
@@ -262,21 +286,29 @@ impl eframe::App for RustDirStatApp {
                 ScanPhase::Scanning => {
                     ui.horizontal(|ui| {
                         ui.spinner();
-                        ui.label(format!(
+                        let mut text = format!(
                             "Scanning\u{2026} {} files, {}",
                             self.files_scanned,
                             format_bytes(self.bytes_scanned),
-                        ));
+                        );
+                        if self.scan_errors > 0 {
+                            text.push_str(&format!(" ({} errors)", self.scan_errors));
+                        }
+                        ui.label(text);
                     });
                 }
                 ScanPhase::Complete(stats) => {
-                    ui.label(format!(
+                    let mut text = format!(
                         "Done \u{2014} {} files, {} dirs, {} in {:.1}s",
                         stats.total_files,
                         stats.total_dirs,
                         format_bytes(stats.total_bytes),
                         stats.duration_ms as f64 / 1000.0,
-                    ));
+                    );
+                    if self.scan_errors > 0 {
+                        text.push_str(&format!(" ({} errors)", self.scan_errors));
+                    }
+                    ui.label(text);
                 }
             }
         });
@@ -318,5 +350,59 @@ impl eframe::App for RustDirStatApp {
                 "Implemented in MS8.",
             );
         });
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn default_is_idle() {
+        let app = RustDirStatApp::default();
+        assert!(matches!(app.phase, ScanPhase::Idle));
+        assert!(app.tree.is_none());
+        assert!(app.receiver.is_none());
+        assert!(app.cancel.is_none());
+        assert!(app.scan_handle.is_none());
+        assert_eq!(app.files_scanned, 0);
+        assert_eq!(app.bytes_scanned, 0);
+        assert_eq!(app.scan_errors, 0);
+        assert!(app.path_error.is_none());
+        assert!(app.scan_path.is_none());
+        assert!(app.path_input.is_empty());
+        assert!(app.initial_path.is_none());
+    }
+
+    #[test]
+    fn format_bytes_zero() {
+        assert_eq!(format_bytes(0), "0 B");
+    }
+
+    #[test]
+    fn format_bytes_under_kb() {
+        assert_eq!(format_bytes(512), "512 B");
+        assert_eq!(format_bytes(1023), "1023 B");
+    }
+
+    #[test]
+    fn format_bytes_kb() {
+        assert_eq!(format_bytes(1024), "1.0 KB");
+        assert_eq!(format_bytes(1536), "1.5 KB");
+    }
+
+    #[test]
+    fn format_bytes_mb() {
+        assert_eq!(format_bytes(1024 * 1024), "1.0 MB");
+    }
+
+    #[test]
+    fn format_bytes_gb() {
+        assert_eq!(format_bytes(1024 * 1024 * 1024), "1.0 GB");
+    }
+
+    #[test]
+    fn format_bytes_tb() {
+        assert_eq!(format_bytes(1024u64 * 1024 * 1024 * 1024), "1.0 TB");
     }
 }

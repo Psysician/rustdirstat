@@ -17,7 +17,9 @@ use std::path::PathBuf;
 /// without accessor boilerplate.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct FileNode {
-    /// Entry name (not full path). Combine with `DirTree::path` for the full path.
+    /// Entry name. For the root node this is the full absolute path; for all
+    /// other nodes it is the filename only. Use `DirTree::path` for full path
+    /// reconstruction.
     pub name: String,
     /// Disk size in bytes. For directories this is 0; use `DirTree::subtree_size`.
     pub size: u64,

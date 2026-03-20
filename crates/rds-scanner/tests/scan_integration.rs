@@ -269,3 +269,77 @@ fn scan_reports_errors_and_continues() {
         "expected ScanError events for permission-denied directory"
     );
 }
+
+/// Compares Scanner::scan (jwalk RayonDefaultPool) against jwalk Serial mode
+/// on a fixture of 50 directories x 20 files.
+///
+/// Uses jwalk Serial as the baseline; jwalk Serial runs on the calling thread
+/// and is functionally identical to single-threaded traversal, without
+/// requiring an additional dev-dependency (ref: DL-006, RA-002).
+///
+/// The fixture uses many subdirectories rather than many files in one directory
+/// because jwalk parallelizes at the readdir level: speedup requires multiple
+/// directories to read concurrently (ref: DL-006).
+///
+/// Marked `#[ignore]` to avoid flakiness on single-core CI runners (ref: R-003).
+#[test]
+#[ignore]
+fn benchmark_parallel_vs_serial() {
+    use std::time::Instant;
+
+    let tmp = TempDir::new().unwrap();
+    let root = tmp.path();
+
+    for i in 0..50 {
+        let dir = root.join(format!("dir_{i:03}"));
+        fs::create_dir(&dir).unwrap();
+        for j in 0..20 {
+            fs::write(dir.join(format!("file_{j}.dat")), "benchmark-data").unwrap();
+        }
+    }
+
+    // Parallel: Scanner::scan() with default config (jwalk RayonDefaultPool)
+    let parallel_start = Instant::now();
+    let (tx, rx) = bounded(4096);
+    let cancel = Arc::new(AtomicBool::new(false));
+    let config = make_config(root.to_path_buf());
+    let handle = Scanner::scan(config, tx, cancel);
+    let mut parallel_nodes = 0u64;
+    for event in rx.iter() {
+        match event {
+            ScanEvent::NodeDiscovered { .. } => parallel_nodes += 1,
+            ScanEvent::ScanComplete { .. } => break,
+            _ => {}
+        }
+    }
+    handle.join().unwrap();
+    let parallel_duration = parallel_start.elapsed();
+
+    // Serial: jwalk::WalkDir with Parallelism::Serial on same fixture
+    let serial_start = Instant::now();
+    let serial_walker = jwalk::WalkDir::new(root)
+        .skip_hidden(false)
+        .parallelism(jwalk::Parallelism::Serial);
+    let mut serial_count = 0u64;
+    for entry in serial_walker {
+        if entry.is_ok() {
+            serial_count += 1;
+        }
+    }
+    let serial_duration = serial_start.elapsed();
+
+    eprintln!(
+        "parallel: {parallel_nodes} nodes in {parallel_duration:?}, \
+         serial: {serial_count} entries in {serial_duration:?}"
+    );
+
+    assert!(parallel_nodes > 0, "parallel scan should discover nodes");
+    assert_eq!(
+        serial_count, parallel_nodes,
+        "both traversals should visit the same number of entries"
+    );
+    assert!(
+        parallel_duration < serial_duration,
+        "parallel ({parallel_duration:?}) should be faster than serial ({serial_duration:?})"
+    );
+}
