@@ -177,6 +177,10 @@ impl RustDirStatApp {
                         errors: 0,
                     });
                     self.receiver = None;
+                    self.cancel = None;
+                    if let Some(handle) = self.scan_handle.take() {
+                        let _ = handle.join();
+                    }
                     return;
                 }
             }
