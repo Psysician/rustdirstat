@@ -1,7 +1,8 @@
-//! egui application shell with directory picker, scan progress, and tree view.
+//! egui application shell with directory picker, scan progress, tree view,
+//! and extension statistics.
 //!
 //! `RustDirStatApp` owns scan state and renders a 3-panel layout: directory
-//! tree (MS6), treemap placeholder (MS8), and extension statistics placeholder (MS7).
+//! tree (MS6), treemap placeholder (MS8), and extension statistics (MS7).
 //! The scanner runs on a background thread; events are drained via
 //! `try_recv()` each frame (bounded to 100 events to avoid blocking
 //! rendering). (ref: DL-003, DL-006)

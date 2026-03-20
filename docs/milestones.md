@@ -56,7 +56,7 @@ Implement `TreeView` panel. Expandable tree sorted by size descending. Shows nam
 
 ---
 
-## MS7 — Extension Statistics Panel
+## ~~MS7 — Extension Statistics Panel~~ DONE
 
 Implement `ExtStatsPanel`. Compute `ExtensionStats` from `DirTree`. Assign deterministic HSL colors per extension. Display sorted table: extension, count, total size, percentage, color swatch. Horizontal bar chart.
 
