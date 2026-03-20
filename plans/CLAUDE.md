@@ -12,3 +12,4 @@ Milestone implementation plans with decision logs.
 | `ms4-parallel-scanner-jwalk.md` | MS4 plan: jwalk parallel scanner, cancel/max_nodes in process_read_dir (completed) | Reviewing jwalk migration decisions, understanding abort mechanism, skip_hidden parity, error mapping |
 | `ms5-gui-shell-directory-picker.md` | MS5 plan: GUI shell, rfd directory picker, scanner integration, progress bar (completed) | Reviewing GUI architecture decisions, understanding scan lifecycle |
 | `ms6-directory-tree-view.md` | MS6 plan: interactive tree view with expand/collapse, size-sorted children, cached SubtreeStats, selection state (completed) | Reviewing tree view architecture, understanding SubtreeStats caching, understanding selection state design |
+| `ms7-extension-statistics-panel.md` | MS7 plan: extension stats panel with color swatches, bar chart, sorted table | Reviewing extension stats design, understanding color assignment |

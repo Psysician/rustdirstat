@@ -9,6 +9,11 @@ use std::collections::HashSet;
 
 use rds_core::tree::DirTree;
 
+/// Horizontal pixels per tree depth level.
+const INDENT_PER_LEVEL: f32 = 20.0;
+/// Horizontal spacer matching the expand/collapse button width.
+const TOGGLE_BUTTON_WIDTH: f32 = 18.0;
+
 /// Cached subtree sizes and file counts. Computed in a single
 /// bottom-up pass over the arena — O(n) total, O(1) per lookup.
 pub(crate) struct SubtreeStats {
@@ -130,7 +135,7 @@ fn render_node(
     let is_expanded = is_dir && has_children && state.is_expanded(index);
     let is_selected = *selected == Some(index);
 
-    let indent = depth as f32 * 20.0;
+    let indent = depth as f32 * INDENT_PER_LEVEL;
 
     ui.horizontal(|ui| {
         ui.add_space(indent);
@@ -147,7 +152,7 @@ fn render_node(
             }
         } else {
             // Spacer aligned with toggle button width.
-            ui.add_space(18.0);
+            ui.add_space(TOGGLE_BUTTON_WIDTH);
         }
 
         // Build label: name + size + file count (dirs only).
