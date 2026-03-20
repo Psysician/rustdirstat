@@ -2,9 +2,19 @@
 # reproducible builds across CI and developer machines.
 #
 /target
+*.pdb
+*.d
+**/*.rs.bk
+
+# Editor/OS
 *.swp
 *.swo
 *~
 .DS_Store
 .idea/
 .vscode/
+
+# AI context / planning (local-only)
+CLAUDE.md
+docs/
+plans/
