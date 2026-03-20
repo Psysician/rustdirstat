@@ -95,6 +95,90 @@ pub(crate) fn sorted_children(tree: &DirTree, index: usize, stats: &SubtreeStats
     children
 }
 
+/// Renders the directory tree inside a scrollable area.
+pub(crate) fn show(
+    tree: &DirTree,
+    stats: &SubtreeStats,
+    state: &mut TreeViewState,
+    selected: &mut Option<usize>,
+    ui: &mut egui::Ui,
+) {
+    egui::ScrollArea::vertical().show(ui, |ui| {
+        render_node(tree, tree.root(), stats, state, selected, ui, 0);
+    });
+}
+
+/// Renders a single tree node and, if expanded, its children recursively.
+/// Only expanded branches are visited, keeping per-frame cost proportional
+/// to visible rows. (ref: DL-007)
+fn render_node(
+    tree: &DirTree,
+    index: usize,
+    stats: &SubtreeStats,
+    state: &mut TreeViewState,
+    selected: &mut Option<usize>,
+    ui: &mut egui::Ui,
+    depth: usize,
+) {
+    let node = match tree.get(index) {
+        Some(n) => n,
+        None => return,
+    };
+
+    let is_dir = node.is_dir;
+    let has_children = !tree.children(index).is_empty();
+    let is_expanded = is_dir && has_children && state.is_expanded(index);
+    let is_selected = *selected == Some(index);
+
+    let indent = depth as f32 * 20.0;
+
+    ui.horizontal(|ui| {
+        ui.add_space(indent);
+
+        // Expand/collapse toggle for directories with children.
+        if is_dir && has_children {
+            let icon = if is_expanded {
+                "\u{25BC}"
+            } else {
+                "\u{25B6}"
+            };
+            if ui.small_button(icon).clicked() {
+                state.toggle(index);
+            }
+        } else {
+            // Spacer aligned with toggle button width.
+            ui.add_space(18.0);
+        }
+
+        // Build label: name + size + file count (dirs only).
+        let size = stats.size(index);
+        let label_text = if is_dir {
+            let count = stats.file_count(index);
+            format!(
+                "{}  {}  ({} files)",
+                node.name,
+                super::format_bytes(size),
+                count,
+            )
+        } else {
+            format!("{}  {}", node.name, super::format_bytes(size))
+        };
+
+        let response = ui.selectable_label(is_selected, &label_text);
+        if response.clicked() {
+            *selected = Some(index);
+        }
+    });
+
+    // Recurse into children sorted by size descending.
+    if is_expanded {
+        let children = sorted_children(tree, index, stats);
+        for child_idx in children {
+            render_node(tree, child_idx, stats, state, selected, ui, depth + 1);
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
