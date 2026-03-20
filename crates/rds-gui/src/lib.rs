@@ -15,6 +15,10 @@ use crossbeam_channel::Receiver;
 use rds_core::scan::{ScanConfig, ScanEvent, ScanStats};
 use rds_core::tree::DirTree;
 
+// Types are pub(crate) but not yet consumed from lib.rs until Task 4 wires them in.
+#[allow(dead_code)]
+mod tree_view;
+
 /// Scan lifecycle phases. (ref: DL-004)
 enum ScanPhase {
     /// No scan running; waiting for user to pick a directory.
