@@ -351,8 +351,11 @@ impl eframe::App for RustDirStatApp {
                             ui,
                         );
                     }
-                    (Some(tree), None) => {
-                        ui.label(format!("{} nodes", tree.len()));
+                    (Some(_), None) => {
+                        ui.colored_label(
+                            egui::Color32::GRAY,
+                            "Scan in progress\u{2026}",
+                        );
                     }
                     _ => {
                         ui.colored_label(egui::Color32::GRAY, "No scan data.");
