@@ -16,7 +16,7 @@ Set up Cargo workspace with 4 crates (rds-core, rds-scanner, rds-gui, binary). C
 
 ---
 
-## MS2 — Core Data Types
+## ~~MS2 — Core Data Types~~ DONE
 
 Implement `rds-core`: `FileNode`, `DirTree` (arena allocator), `ScanEvent` enum, `ScanConfig`, `ScanStats`, `AppConfig`. Unit tests for tree operations (insert, subtree size, path reconstruction, parent-child linking).
 
