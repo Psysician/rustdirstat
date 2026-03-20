@@ -85,7 +85,7 @@ impl RustDirStatApp {
         if old_rx.is_some() || old_handle.is_some() {
             std::thread::spawn(move || {
                 if let Some(rx) = old_rx {
-                    while rx.try_recv().is_ok() {}
+                    for _ in rx {}
                 }
                 if let Some(handle) = old_handle {
                     let _ = handle.join();
