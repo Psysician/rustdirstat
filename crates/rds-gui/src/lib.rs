@@ -40,6 +40,9 @@ pub struct RustDirStatApp {
     scan_path: Option<PathBuf>,
     /// CLI path consumed on first frame to auto-start scan.
     initial_path: Option<PathBuf>,
+    /// Text input for typing a path directly (fallback for WSL2/Wayland
+    /// where rfd native dialogs crash the X11 connection).
+    path_input: String,
 }
 
 impl Default for RustDirStatApp {
@@ -64,6 +67,7 @@ impl RustDirStatApp {
             bytes_scanned: 0,
             scan_path: None,
             initial_path,
+            path_input: String::new(),
         }
     }
 
@@ -216,17 +220,31 @@ impl eframe::App for RustDirStatApp {
         // --- Toolbar ---
         egui::TopBottomPanel::top("toolbar").show(ctx, |ui| {
             ui.horizontal(|ui| {
-                if ui.button("Open Folder...").clicked() {
-                    // Blocking native dialog; OS runs nested event loop
-                    // so the window stays responsive. (ref: DL-001)
-                    if let Some(path) = rfd::FileDialog::new().pick_folder() {
-                        self.start_scan(path);
-                    }
+                // Native dialog button — may crash on WSL2/Wayland.
+                if ui.button("Browse...").clicked()
+                    && let Some(path) = rfd::FileDialog::new().pick_folder()
+                {
+                    self.path_input = path.display().to_string();
+                    self.start_scan(path);
                 }
 
-                if let Some(ref path) = self.scan_path {
-                    ui.separator();
-                    ui.monospace(path.display().to_string());
+                ui.separator();
+
+                // Text input fallback — always works, including WSL2.
+                let response = ui.add(
+                    egui::TextEdit::singleline(&mut self.path_input)
+                        .hint_text("/path/to/scan")
+                        .desired_width(400.0),
+                );
+                let scan_clicked = ui.button("Scan").clicked();
+                let enter_pressed = response.lost_focus()
+                    && ui.input(|i| i.key_pressed(egui::Key::Enter));
+
+                if (scan_clicked || enter_pressed) && !self.path_input.is_empty() {
+                    let path = PathBuf::from(&self.path_input);
+                    if path.is_dir() {
+                        self.start_scan(path);
+                    }
                 }
             });
         });
