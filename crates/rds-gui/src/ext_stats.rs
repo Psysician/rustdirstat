@@ -4,12 +4,11 @@
 //! as a horizontal stacked bar chart and a scrollable detail table. Colors are
 //! converted from `HslColor` to `egui::Color32` via `hsl_to_color32`. (ref: DL-001, DL-003)
 
-use rds_core::stats::HslColor;
+use rds_core::stats::{ExtensionStats, HslColor};
 
 /// Converts an `HslColor` (hue 0–360, saturation 0–1, lightness 0–1) to
 /// an `egui::Color32`. Used for rendering swatches and bar chart segments.
 /// Will also serve MS8 treemap coloring. (ref: DL-001)
-#[allow(dead_code)] // used by ext_stats::show (Task 2) and MS8 treemap
 pub(crate) fn hsl_to_color32(hsl: &HslColor) -> egui::Color32 {
     let h = hsl.h;
     let s = hsl.s;
@@ -38,6 +37,94 @@ pub(crate) fn hsl_to_color32(hsl: &HslColor) -> egui::Color32 {
     let b = ((b1 + m) * 255.0).round() as u8;
 
     egui::Color32::from_rgb(r, g, b)
+}
+
+/// Renders the extension statistics panel: a horizontal stacked bar chart
+/// at the top for visual overview, and a scrollable detail table below.
+///
+/// `ext_stats` must be pre-sorted by `total_bytes` descending (as returned
+/// by `compute_extension_stats`). (ref: DL-004, DL-006)
+#[allow(dead_code)]
+pub(crate) fn show(ext_stats: &[ExtensionStats], ui: &mut egui::Ui) {
+    // --- Stacked horizontal bar chart (ref: DL-008) ---
+    let available_width = ui.available_width();
+    let bar_height = 20.0;
+    let (bar_rect, _) = ui.allocate_exact_size(
+        egui::vec2(available_width, bar_height),
+        egui::Sense::hover(),
+    );
+
+    let mut x = bar_rect.left();
+    for stat in ext_stats {
+        let remaining = bar_rect.right() - x;
+        if remaining <= 0.0 {
+            break;
+        }
+        let segment_width = (stat.percentage as f32 / 100.0) * bar_rect.width();
+        if segment_width < 1.0 {
+            continue;
+        }
+        let w = segment_width.max(2.0).min(remaining);
+        let segment = egui::Rect::from_min_size(
+            egui::pos2(x, bar_rect.top()),
+            egui::vec2(w, bar_height),
+        );
+        ui.painter()
+            .rect_filled(segment, 0.0, hsl_to_color32(&stat.color));
+        x += w;
+    }
+
+    ui.add_space(8.0);
+
+    // --- Scrollable detail table ---
+    egui::ScrollArea::vertical().show(ui, |ui| {
+        egui::Grid::new("ext_stats_grid")
+            .striped(true)
+            .num_columns(5)
+            .spacing([8.0, 4.0])
+            .show(ui, |ui| {
+                // Header row.
+                ui.label("");
+                ui.label(egui::RichText::new("Ext").strong());
+                ui.label(egui::RichText::new("Count").strong());
+                ui.label(egui::RichText::new("Size").strong());
+                ui.label(egui::RichText::new("%").strong());
+                ui.end_row();
+
+                // Data rows.
+                for stat in ext_stats {
+                    // Color swatch: 12x12 painted rectangle.
+                    let (swatch_rect, _) = ui.allocate_exact_size(
+                        egui::vec2(12.0, 12.0),
+                        egui::Sense::hover(),
+                    );
+                    ui.painter().rect_filled(
+                        swatch_rect,
+                        2.0,
+                        hsl_to_color32(&stat.color),
+                    );
+
+                    // Extension name. (ref: DL-007)
+                    let display_name = if stat.extension.is_empty() {
+                        "(no ext)"
+                    } else {
+                        &stat.extension
+                    };
+                    ui.label(display_name);
+
+                    // File count.
+                    ui.label(stat.count.to_string());
+
+                    // Total size (human-readable).
+                    ui.label(super::format_bytes(stat.total_bytes));
+
+                    // Percentage.
+                    ui.label(format!("{:.1}%", stat.percentage));
+
+                    ui.end_row();
+                }
+            });
+    });
 }
 
 #[cfg(test)]
