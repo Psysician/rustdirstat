@@ -1,10 +1,12 @@
 # crates/rds-scanner/
 
-Parallel filesystem traversal and SHA-2 duplicate detection.
+Single-threaded filesystem traversal via `walkdir`; emits `ScanEvent` stream over bounded crossbeam-channel.
 
 ## Files
 
 | File | What | When to read |
 | ---- | ---- | ------------ |
-| `Cargo.toml` | Crate manifest; depends on `jwalk`, `rayon`, `sha2`, `crossbeam-channel`, `tracing`, `rds-core` | Modifying scanner dependencies |
-| `src/lib.rs` | Library root; bounded `crossbeam-channel` event streaming to GUI documented | Implementing scan logic, modifying scanner-GUI event protocol |
+| `Cargo.toml` | Crate manifest; depends on `walkdir`, `crossbeam-channel`, `tracing`, `rds-core` | Modifying scanner dependencies |
+| `src/lib.rs` | Library root; module declaration and public re-exports | Implementing scan logic, modifying public API |
+| `src/scanner.rs` | `Scanner` struct, `scan()` entry point, walk loop, helper functions | Implementing traversal, modifying event emission, debugging scan behaviour |
+| `tests/scan_integration.rs` | Integration tests; real filesystem fixtures via `tempfile` | Adding scan tests, verifying DirTree correctness, debugging event ordering |

@@ -1,6 +1,7 @@
-# rds-scanner: parallel filesystem traversal and hashing.
-# Uses jwalk for parallel directory walking and crossbeam-channel to stream
-# scan events to the GUI without blocking either thread.
+# rds-scanner: filesystem traversal and event streaming.
+#
+# Uses walkdir for single-threaded traversal; produces ScanEvent stream over
+# bounded crossbeam-channel (DL-002).
 [package]
 name = "rds-scanner"
 version = "0.1.0"
@@ -8,8 +9,9 @@ edition = "2024"
 
 [dependencies]
 rds-core = { workspace = true }
-jwalk = { workspace = true }
-rayon = { workspace = true }
-sha2 = { workspace = true }
 crossbeam-channel = { workspace = true }
 tracing = { workspace = true }
+walkdir = { workspace = true }
+
+[dev-dependencies]
+tempfile = { workspace = true }
