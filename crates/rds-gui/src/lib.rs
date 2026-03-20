@@ -128,14 +128,18 @@ impl RustDirStatApp {
     }
 
     /// Transitions to Complete, drops the channel, and joins the scanner
-    /// thread. The scanner sends `ScanComplete` as its last act, so the
-    /// join completes promptly without blocking the GUI frame.
+    /// thread on a detached thread. Although the scanner has already sent
+    /// `ScanComplete`, it still needs to drop locals (notably `path_to_index`
+    /// which can hold millions of PathBuf entries on large scans). Joining
+    /// on a detached thread avoids GUI stutter from those deallocations.
     fn finish_scan(&mut self, stats: ScanStats) {
         self.phase = ScanPhase::Complete(stats);
         self.receiver = None;
         self.cancel = None;
         if let Some(handle) = self.scan_handle.take() {
-            let _ = handle.join();
+            std::thread::spawn(move || {
+                let _ = handle.join();
+            });
         }
     }
 
