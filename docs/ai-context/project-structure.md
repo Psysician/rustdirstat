@@ -17,11 +17,14 @@ rustdirstat/
         scan.rs               # ScanEvent enum, ScanConfig, ScanStats
         config.rs             # AppConfig + CustomCommand (TOML-deserializable)
         stats.rs              # ExtensionStats, HslColor, color_for_extension(), compute_extension_stats()
-    rds-scanner/              # Parallel filesystem traversal + SHA-2 hashing
-      Cargo.toml              # Deps: jwalk, rayon, sha2, crossbeam-channel, tracing, rds-core
+    rds-scanner/              # Single-threaded walkdir scanner + SHA-2 hashing (MS3 done)
+      Cargo.toml              # Deps: walkdir, crossbeam-channel, tracing, rds-core
       CLAUDE.md
       src/
-        lib.rs                # Scanner stub (MS3+ implementation pending)
+        lib.rs                # Module declarations and re-exports
+        scanner.rs            # Scanner::scan() — walkdir traversal, cancel flag, max_nodes, event streaming
+      tests/
+        scan_integration.rs   # Integration tests with temp directory fixtures
     rds-gui/                  # egui/eframe GUI shell + treemap rendering
       Cargo.toml              # Deps: eframe, egui, streemap, crossbeam-channel, tracing, rds-core
       CLAUDE.md
@@ -42,6 +45,7 @@ rustdirstat/
   plans/
     ms1-workspace-scaffold-ci.md  # MS1 implementation plan (completed)
     ms2-core-data-types.md        # MS2 implementation plan (completed)
+    ms3-single-threaded-scanner.md # MS3 implementation plan (completed)
   justfile                    # Task runner: build, test, lint, fmt, run, check, clean
   .gitignore                  # Ignores /target; Cargo.lock NOT ignored
   CLAUDE.md                   # Root AI context with file/directory guide
@@ -74,4 +78,5 @@ rustdirstat/
 |----|------|--------|
 | 1 | Workspace Scaffold & CI | Done |
 | 2 | Core Data Types | Done |
-| 3-21 | See docs/milestones.md | Pending |
+| 3 | Single-Threaded Scanner | Done |
+| 4-21 | See docs/milestones.md | Pending |

@@ -17,10 +17,14 @@ Registry of all project documentation, classified by tier for navigation.
 
 | Path | Purpose |
 |------|---------|
+| `crates/CLAUDE.md` | Workspace crates directory index |
 | `crates/rds-core/CLAUDE.md` | Core crate AI context: file guide, module structure, zero-dep constraint |
 | `crates/rds-core/README.md` | Arena invariants, index stability contract, append-only design rationale |
-| `crates/rds-scanner/CLAUDE.md` | Scanner crate AI context: dependencies, event protocol |
+| `crates/rds-core/src/CLAUDE.md` | Core source files index: tree, scan, config, stats modules |
+| `crates/rds-scanner/CLAUDE.md` | Scanner crate AI context: walkdir traversal, event streaming |
 | `crates/rds-gui/CLAUDE.md` | GUI crate AI context: dependencies, streemap declaration |
+| `docs/CLAUDE.md` | Documentation directory index |
+| `plans/CLAUDE.md` | Implementation plans directory index |
 
 ## Tier 3 — Feature-Specific / Implementation Plans
 
@@ -28,6 +32,7 @@ Registry of all project documentation, classified by tier for navigation.
 |------|---------|
 | `plans/ms1-workspace-scaffold-ci.md` | MS1 implementation plan with decision log (completed) |
 | `plans/ms2-core-data-types.md` | MS2 implementation plan with decision log (completed) |
+| `plans/ms3-single-threaded-scanner.md` | MS3 implementation plan with decision log (completed) |
 
 ## Cross-Reference Map
 
@@ -40,3 +45,4 @@ Registry of all project documentation, classified by tier for navigation.
 | Milestones & scope | `docs/milestones.md` | Design spec (Goals/Non-Goals) |
 | Config schema | `crates/rds-core/src/config.rs` | Design spec (Configuration) |
 | Extension colors | `crates/rds-core/src/stats.rs` | Design spec (Treemap Rendering) |
+| Scanner implementation | `crates/rds-scanner/src/scanner.rs` | Design spec (Data Flow), `scan.rs` events |

@@ -24,7 +24,7 @@ Implement `rds-core`: `FileNode`, `DirTree` (arena allocator), `ScanEvent` enum,
 
 ---
 
-## MS3 — Single-Threaded Scanner
+## ~~MS3 — Single-Threaded Scanner~~ DONE
 
 Implement basic `Scanner::scan()` in `rds-scanner` using `walkdir` (single-threaded first). Sends `NodeDiscovered` events through crossbeam channel. Integration test: scan a temp directory fixture, verify file counts, sizes, tree structure.
 
