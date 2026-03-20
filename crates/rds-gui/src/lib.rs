@@ -1,7 +1,7 @@
-//! egui application shell with directory picker and scan progress.
+//! egui application shell with directory picker, scan progress, and tree view.
 //!
-//! `RustDirStatApp` owns scan state and renders a 3-panel layout with
-//! placeholder panels for tree view, treemap, and extension statistics.
+//! `RustDirStatApp` owns scan state and renders a 3-panel layout: directory
+//! tree (MS6), treemap placeholder (MS8), and extension statistics placeholder (MS7).
 //! The scanner runs on a background thread; events are drained via
 //! `try_recv()` each frame (bounded to 100 events to avoid blocking
 //! rendering). (ref: DL-003, DL-006)
@@ -14,6 +14,8 @@ use std::thread::JoinHandle;
 use crossbeam_channel::Receiver;
 use rds_core::scan::{ScanConfig, ScanEvent, ScanStats};
 use rds_core::tree::DirTree;
+
+mod tree_view;
 
 /// Scan lifecycle phases. (ref: DL-004)
 enum ScanPhase {
@@ -47,6 +49,12 @@ pub struct RustDirStatApp {
     path_error: Option<String>,
     /// Running count of ScanError events received during the current scan.
     scan_errors: u64,
+    /// Expand/collapse state for directory tree panel.
+    tree_view_state: tree_view::TreeViewState,
+    /// Currently selected node index, shared across panels (MS10).
+    selected_node: Option<usize>,
+    /// Cached subtree sizes and file counts, computed after scan completes.
+    subtree_stats: Option<tree_view::SubtreeStats>,
 }
 
 impl Default for RustDirStatApp {
@@ -74,6 +82,9 @@ impl RustDirStatApp {
             path_input: String::new(),
             path_error: None,
             scan_errors: 0,
+            tree_view_state: tree_view::TreeViewState::new(),
+            selected_node: None,
+            subtree_stats: None,
         }
     }
 
@@ -108,6 +119,9 @@ impl RustDirStatApp {
         self.files_scanned = 0;
         self.bytes_scanned = 0;
         self.scan_errors = 0;
+        self.tree_view_state.reset();
+        self.selected_node = None;
+        self.subtree_stats = None;
         self.path_error = None;
         self.phase = ScanPhase::Scanning;
         self.scan_path = Some(path.clone());
@@ -141,6 +155,10 @@ impl RustDirStatApp {
                 let _ = handle.join();
             });
         }
+        if let Some(ref tree) = self.tree {
+            self.subtree_stats = Some(tree_view::SubtreeStats::compute(tree));
+            self.tree_view_state.expand(tree.root());
+        }
     }
 
     /// Drains up to 100 ScanEvent values from the channel per frame.
@@ -162,7 +180,7 @@ impl RustDirStatApp {
                     match parent_index {
                         None => {
                             // First event: create the tree with root node.
-                            self.tree = Some(DirTree::new(&node.name));
+                            self.tree = Some(DirTree::from_root(node));
                         }
                         Some(pidx) => {
                             if let Some(ref mut t) = self.tree {
@@ -205,7 +223,7 @@ impl RustDirStatApp {
 }
 
 /// Formats a byte count as a human-readable string (B/KB/MB/GB/TB).
-fn format_bytes(bytes: u64) -> String {
+pub(crate) fn format_bytes(bytes: u64) -> String {
     const KB: u64 = 1024;
     const MB: u64 = KB * 1024;
     const GB: u64 = MB * 1024;
@@ -317,19 +335,31 @@ impl eframe::App for RustDirStatApp {
             }
         });
 
-        // --- Left panel: directory tree placeholder (MS6) ---
+        // --- Left panel: directory tree (MS6) ---
         egui::SidePanel::left("tree_panel")
             .default_width(250.0)
             .show(ctx, |ui| {
                 ui.heading("Directory Tree");
                 ui.separator();
-                if let Some(ref tree) = self.tree {
-                    ui.label(format!("{} nodes", tree.len()));
-                } else {
-                    ui.colored_label(
-                        egui::Color32::GRAY,
-                        "No scan data.",
-                    );
+                match (&self.tree, &self.subtree_stats) {
+                    (Some(tree), Some(stats)) => {
+                        tree_view::show(
+                            tree,
+                            stats,
+                            &mut self.tree_view_state,
+                            &mut self.selected_node,
+                            ui,
+                        );
+                    }
+                    (Some(_), None) => {
+                        ui.colored_label(
+                            egui::Color32::GRAY,
+                            "Scan in progress\u{2026}",
+                        );
+                    }
+                    _ => {
+                        ui.colored_label(egui::Color32::GRAY, "No scan data.");
+                    }
                 }
             });
 
@@ -372,6 +402,8 @@ mod tests {
         assert_eq!(app.files_scanned, 0);
         assert_eq!(app.bytes_scanned, 0);
         assert_eq!(app.scan_errors, 0);
+        assert!(app.selected_node.is_none());
+        assert!(app.subtree_stats.is_none());
         assert!(app.path_error.is_none());
         assert!(app.scan_path.is_none());
         assert!(app.path_input.is_empty());

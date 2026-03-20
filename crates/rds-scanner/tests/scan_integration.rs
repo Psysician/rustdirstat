@@ -19,7 +19,7 @@ fn build_tree_from_events(
         match event {
             ScanEvent::NodeDiscovered { node, parent_index } => match parent_index {
                 None => {
-                    tree = Some(DirTree::new(&node.name));
+                    tree = Some(DirTree::from_root(node));
                 }
                 Some(pidx) => {
                     if let Some(ref mut t) = tree {

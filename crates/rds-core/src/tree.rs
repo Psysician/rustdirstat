@@ -63,6 +63,16 @@ impl DirTree {
         DirTree { nodes: vec![root] }
     }
 
+    /// Creates a new tree using the given `FileNode` as the root.
+    ///
+    /// Clears `parent` and `children` to enforce root invariants.
+    /// Preserves all other fields (`size`, `modified`, `extension`, etc.).
+    pub fn from_root(mut node: FileNode) -> Self {
+        node.parent = None;
+        node.children = Vec::new();
+        DirTree { nodes: vec![node] }
+    }
+
     /// Appends `node` as a child of `parent_index` and returns the new node's index.
     ///
     /// Indices are stable: nodes are append-only. Delete operations MUST tombstone
@@ -189,6 +199,28 @@ mod tests {
         assert_eq!(root.parent, None);
         assert!(root.children.is_empty());
         assert_eq!(root.size, 0);
+    }
+
+    #[test]
+    fn from_root_preserves_all_fields() {
+        let node = FileNode {
+            name: "/tmp/scan".to_string(),
+            size: 4096,
+            is_dir: true,
+            children: vec![99], // should be cleared
+            parent: Some(42),   // should be cleared
+            extension: None,
+            modified: Some(1_700_000_000),
+        };
+        let tree = DirTree::from_root(node);
+        assert_eq!(tree.len(), 1);
+        let root = tree.get(0).unwrap();
+        assert_eq!(root.name, "/tmp/scan");
+        assert_eq!(root.size, 4096);
+        assert!(root.is_dir);
+        assert_eq!(root.modified, Some(1_700_000_000));
+        assert_eq!(root.parent, None);
+        assert!(root.children.is_empty());
     }
 
     #[test]
