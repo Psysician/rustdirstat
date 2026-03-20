@@ -1,14 +1,300 @@
-//! egui application shell. Implements `eframe::App` for the main window.
+//! egui application shell with directory picker and scan progress.
 //!
-//! `RustDirStatApp` satisfies the eframe contract with an empty central panel.
-//! Scan state, treemap rendering, and panel layout are separate concerns
-//! handled by other modules.
+//! `RustDirStatApp` owns scan state and renders a 3-panel layout with
+//! placeholder panels for tree view, treemap, and extension statistics.
+//! The scanner runs on a background thread; events are drained via
+//! `try_recv()` each frame (bounded to 100 events to avoid blocking
+//! rendering). (ref: DL-003, DL-006)
 
-#[derive(Default)]
-pub struct RustDirStatApp;
+use std::path::PathBuf;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::thread::JoinHandle;
+
+use crossbeam_channel::Receiver;
+use rds_core::scan::{ScanConfig, ScanEvent, ScanStats};
+use rds_core::tree::DirTree;
+
+/// Scan lifecycle phases. (ref: DL-004)
+enum ScanPhase {
+    /// No scan running; waiting for user to pick a directory.
+    Idle,
+    /// Scanner thread is active; draining events each frame.
+    Scanning,
+    /// Scanner finished; summary stats available.
+    Complete(ScanStats),
+}
+
+/// Main application state. Holds the scan lifecycle, DirTree arena being
+/// built from scanner events, and display counters for the progress bar.
+pub struct RustDirStatApp {
+    phase: ScanPhase,
+    /// Arena tree built incrementally from NodeDiscovered events.
+    /// None until the first scan starts. (ref: DL-005)
+    tree: Option<DirTree>,
+    receiver: Option<Receiver<ScanEvent>>,
+    cancel: Option<Arc<AtomicBool>>,
+    scan_handle: Option<JoinHandle<()>>,
+    files_scanned: u64,
+    bytes_scanned: u64,
+    scan_path: Option<PathBuf>,
+    /// CLI path consumed on first frame to auto-start scan.
+    initial_path: Option<PathBuf>,
+}
+
+impl Default for RustDirStatApp {
+    /// Delegates to `new(None)` for backward compatibility with
+    /// callers that construct via Default. (ref: DL-007)
+    fn default() -> Self {
+        Self::new(None)
+    }
+}
+
+impl RustDirStatApp {
+    /// Creates a new app. If `initial_path` is `Some`, scanning starts
+    /// automatically on the first frame.
+    pub fn new(initial_path: Option<PathBuf>) -> Self {
+        Self {
+            phase: ScanPhase::Idle,
+            tree: None,
+            receiver: None,
+            cancel: None,
+            scan_handle: None,
+            files_scanned: 0,
+            bytes_scanned: 0,
+            scan_path: None,
+            initial_path,
+        }
+    }
+
+    /// Cancels any running scan, resets state, and spawns a new Scanner
+    /// thread for `path`. Creates a bounded(4096) crossbeam channel and
+    /// a fresh cancel flag. Old scanner cleanup happens on a detached
+    /// thread to avoid freezing the GUI. (ref: DL-002, DL-009)
+    fn start_scan(&mut self, path: PathBuf) {
+        // Cancel existing scan if running.
+        if let Some(ref cancel) = self.cancel {
+            cancel.store(true, Ordering::Relaxed);
+        }
+        // Move old channel and handle to a detached cleanup thread so the
+        // GUI thread does not block on join. The cleanup thread drains
+        // remaining events (unblocking the scanner if the channel was full)
+        // and then joins the scanner thread. (ref: DL-009)
+        let old_rx = self.receiver.take();
+        let old_handle = self.scan_handle.take();
+        if old_rx.is_some() || old_handle.is_some() {
+            std::thread::spawn(move || {
+                if let Some(rx) = old_rx {
+                    while rx.try_recv().is_ok() {}
+                }
+                if let Some(handle) = old_handle {
+                    let _ = handle.join();
+                }
+            });
+        }
+
+        // Reset scan state.
+        self.tree = None;
+        self.files_scanned = 0;
+        self.bytes_scanned = 0;
+        self.phase = ScanPhase::Scanning;
+        self.scan_path = Some(path.clone());
+
+        // Launch scanner.
+        let (tx, rx) = crossbeam_channel::bounded(4096);
+        let cancel = Arc::new(AtomicBool::new(false));
+        let config = ScanConfig {
+            root: path,
+            ..ScanConfig::default()
+        };
+
+        let handle = rds_scanner::Scanner::scan(config, tx, cancel.clone());
+
+        self.receiver = Some(rx);
+        self.cancel = Some(cancel);
+        self.scan_handle = Some(handle);
+    }
+
+    /// Drains up to 100 ScanEvent values from the channel per frame.
+    /// Inserts nodes into the DirTree arena, updates progress counters,
+    /// and transitions to Complete on ScanComplete or channel disconnect.
+    ///
+    /// Clones the Receiver (reference-counted) to avoid borrowing
+    /// `self.receiver` for the duration of the loop, which would prevent
+    /// `self.receiver = None` on scan completion. (ref: DL-003, DL-005, DL-008)
+    fn drain_events(&mut self) {
+        let rx = match self.receiver.clone() {
+            Some(rx) => rx,
+            None => return,
+        };
+
+        for _ in 0..100 {
+            match rx.try_recv() {
+                Ok(ScanEvent::NodeDiscovered { node, parent_index }) => {
+                    match parent_index {
+                        None => {
+                            // First event: create the tree with root node.
+                            self.tree = Some(DirTree::new(&node.name));
+                        }
+                        Some(pidx) => {
+                            if let Some(ref mut t) = self.tree {
+                                t.insert(pidx, node);
+                            }
+                        }
+                    }
+                }
+                Ok(ScanEvent::Progress {
+                    files_scanned,
+                    bytes_scanned,
+                }) => {
+                    self.files_scanned = files_scanned;
+                    self.bytes_scanned = bytes_scanned;
+                }
+                Ok(ScanEvent::ScanComplete { stats }) => {
+                    self.phase = ScanPhase::Complete(stats);
+                    self.receiver = None;
+                    self.cancel = None;
+                    if let Some(handle) = self.scan_handle.take() {
+                        let _ = handle.join();
+                    }
+                    return;
+                }
+                Ok(ScanEvent::ScanError { .. }) => {}
+                Ok(ScanEvent::DuplicateFound { .. }) => {}
+                Err(crossbeam_channel::TryRecvError::Empty) => return,
+                Err(crossbeam_channel::TryRecvError::Disconnected) => {
+                    // Scanner thread exited without ScanComplete (shouldn't
+                    // happen, but handle gracefully).
+                    self.phase = ScanPhase::Complete(ScanStats {
+                        total_files: 0,
+                        total_dirs: 0,
+                        total_bytes: 0,
+                        duration_ms: 0,
+                        errors: 0,
+                    });
+                    self.receiver = None;
+                    return;
+                }
+            }
+        }
+    }
+}
+
+/// Formats a byte count as a human-readable string (B/KB/MB/GB/TB).
+fn format_bytes(bytes: u64) -> String {
+    const KB: u64 = 1024;
+    const MB: u64 = KB * 1024;
+    const GB: u64 = MB * 1024;
+    const TB: u64 = GB * 1024;
+
+    if bytes >= TB {
+        format!("{:.1} TB", bytes as f64 / TB as f64)
+    } else if bytes >= GB {
+        format!("{:.1} GB", bytes as f64 / GB as f64)
+    } else if bytes >= MB {
+        format!("{:.1} MB", bytes as f64 / MB as f64)
+    } else if bytes >= KB {
+        format!("{:.1} KB", bytes as f64 / KB as f64)
+    } else {
+        format!("{bytes} B")
+    }
+}
 
 impl eframe::App for RustDirStatApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
-        egui::CentralPanel::default().show(ctx, |_ui| {});
+        // Auto-start scan from CLI path on first frame.
+        if let Some(path) = self.initial_path.take() {
+            self.start_scan(path);
+        }
+
+        // Drain scanner events and keep repainting while scanning.
+        if matches!(self.phase, ScanPhase::Scanning) {
+            self.drain_events();
+            ctx.request_repaint();
+        }
+
+        // --- Toolbar ---
+        egui::TopBottomPanel::top("toolbar").show(ctx, |ui| {
+            ui.horizontal(|ui| {
+                if ui.button("Open Folder...").clicked() {
+                    // Blocking native dialog; OS runs nested event loop
+                    // so the window stays responsive. (ref: DL-001)
+                    if let Some(path) = rfd::FileDialog::new().pick_folder() {
+                        self.start_scan(path);
+                    }
+                }
+
+                if let Some(ref path) = self.scan_path {
+                    ui.separator();
+                    ui.monospace(path.display().to_string());
+                }
+            });
+        });
+
+        // --- Status bar / progress ---
+        egui::TopBottomPanel::bottom("status").show(ctx, |ui| {
+            match &self.phase {
+                ScanPhase::Idle => {
+                    ui.label("Ready \u{2014} open a folder to begin scanning.");
+                }
+                ScanPhase::Scanning => {
+                    ui.horizontal(|ui| {
+                        ui.spinner();
+                        ui.label(format!(
+                            "Scanning\u{2026} {} files, {}",
+                            self.files_scanned,
+                            format_bytes(self.bytes_scanned),
+                        ));
+                    });
+                }
+                ScanPhase::Complete(stats) => {
+                    ui.label(format!(
+                        "Done \u{2014} {} files, {} dirs, {} in {:.1}s",
+                        stats.total_files,
+                        stats.total_dirs,
+                        format_bytes(stats.total_bytes),
+                        stats.duration_ms as f64 / 1000.0,
+                    ));
+                }
+            }
+        });
+
+        // --- Left panel: directory tree placeholder (MS6) ---
+        egui::SidePanel::left("tree_panel")
+            .default_width(250.0)
+            .show(ctx, |ui| {
+                ui.heading("Directory Tree");
+                ui.separator();
+                if let Some(ref tree) = self.tree {
+                    ui.label(format!("{} nodes", tree.len()));
+                } else {
+                    ui.colored_label(
+                        egui::Color32::GRAY,
+                        "No scan data.",
+                    );
+                }
+            });
+
+        // --- Right panel: extension statistics placeholder (MS7) ---
+        egui::SidePanel::right("ext_stats_panel")
+            .default_width(200.0)
+            .show(ctx, |ui| {
+                ui.heading("Extensions");
+                ui.separator();
+                ui.colored_label(
+                    egui::Color32::GRAY,
+                    "Implemented in MS7.",
+                );
+            });
+
+        // --- Central panel: treemap placeholder (MS8) ---
+        egui::CentralPanel::default().show(ctx, |ui| {
+            ui.heading("Treemap");
+            ui.separator();
+            ui.colored_label(
+                egui::Color32::GRAY,
+                "Implemented in MS8.",
+            );
+        });
     }
 }
