@@ -44,7 +44,6 @@ pub(crate) fn hsl_to_color32(hsl: &HslColor) -> egui::Color32 {
 ///
 /// `ext_stats` must be pre-sorted by `total_bytes` descending (as returned
 /// by `compute_extension_stats`). (ref: DL-004, DL-006)
-#[allow(dead_code)]
 pub(crate) fn show(ext_stats: &[ExtensionStats], ui: &mut egui::Ui) {
     // --- Stacked horizontal bar chart (ref: DL-008) ---
     let available_width = ui.available_width();
