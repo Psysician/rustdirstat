@@ -81,6 +81,10 @@ fn scan_basic_tree() {
     assert_eq!(stats.total_dirs, 2);
     assert_eq!(stats.total_bytes, 18);
     assert!(errors.is_empty(), "no errors expected: {errors:?}");
+
+    // Root path must be the full absolute path, not just the last component.
+    let root_path = tree.path(tree.root());
+    assert_eq!(root_path, root.to_path_buf());
 }
 
 #[test]

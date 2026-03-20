@@ -39,11 +39,7 @@ fn send_root_node(
     };
 
     let root_modified = epoch_seconds(&root_metadata);
-    let root_name = config
-        .root
-        .file_name()
-        .map(|n| n.to_string_lossy().into_owned())
-        .unwrap_or_else(|| config.root.to_string_lossy().into_owned());
+    let root_name = config.root.to_string_lossy().into_owned();
 
     let root_node = FileNode {
         name: root_name,
@@ -69,15 +65,14 @@ fn send_root_node(
     Ok(())
 }
 
-fn entry_to_node(entry: &walkdir::DirEntry) -> FileNode {
+fn entry_to_node(entry: &walkdir::DirEntry) -> Result<FileNode, String> {
     let is_dir = entry.file_type().is_dir();
-    let (size, modified) = match entry.metadata() {
-        Ok(ref m) => {
-            let sz = if is_dir { 0 } else { m.len() };
-            (sz, epoch_seconds(m))
-        }
-        Err(_) => (0, None),
-    };
+    let metadata = entry
+        .metadata()
+        .map_err(|e| format!("{}: {e}", entry.path().display()))?;
+
+    let size = if is_dir { 0 } else { metadata.len() };
+    let modified = epoch_seconds(&metadata);
 
     let ext = if is_dir {
         None
@@ -90,7 +85,7 @@ fn entry_to_node(entry: &walkdir::DirEntry) -> FileNode {
 
     let name = entry.file_name().to_string_lossy().into_owned();
 
-    FileNode {
+    Ok(FileNode {
         name,
         size,
         is_dir,
@@ -98,7 +93,7 @@ fn entry_to_node(entry: &walkdir::DirEntry) -> FileNode {
         parent: None,
         extension: ext,
         modified,
-    }
+    })
 }
 
 struct WalkAccum {
@@ -228,7 +223,18 @@ impl Scanner {
                 }
             };
 
-            let node = entry_to_node(&entry);
+            let node = match entry_to_node(&entry) {
+                Ok(n) => n,
+                Err(error) => {
+                    warn!(path = %entry_path.display(), %error, "metadata error");
+                    let _ = tx.send(ScanEvent::ScanError {
+                        path: entry_path,
+                        error,
+                    });
+                    acc.errors += 1;
+                    continue;
+                }
+            };
             let is_dir = node.is_dir;
             let size = node.size;
 
