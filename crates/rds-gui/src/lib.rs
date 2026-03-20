@@ -15,6 +15,7 @@ use crossbeam_channel::Receiver;
 use rds_core::scan::{ScanConfig, ScanEvent, ScanStats};
 use rds_core::tree::DirTree;
 
+mod ext_stats;
 mod tree_view;
 
 /// Scan lifecycle phases. (ref: DL-004)
