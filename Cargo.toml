@@ -8,6 +8,7 @@ resolver = "3"
 [workspace.dependencies]
 eframe = "0.33.3"
 egui = "0.33.3"
+rfd = "0.15"
 jwalk = "0.8.1"
 rayon = "1.11.0"
 crossbeam-channel = "0.5.15"
