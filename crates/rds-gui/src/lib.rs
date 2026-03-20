@@ -180,7 +180,7 @@ impl RustDirStatApp {
                     match parent_index {
                         None => {
                             // First event: create the tree with root node.
-                            self.tree = Some(DirTree::new(&node.name));
+                            self.tree = Some(DirTree::from_root(node));
                         }
                         Some(pidx) => {
                             if let Some(ref mut t) = self.tree {
