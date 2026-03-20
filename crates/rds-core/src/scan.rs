@@ -1,0 +1,121 @@
+//! Scan events, configuration, and summary statistics.
+//!
+//! `ScanEvent` crosses a bounded crossbeam channel from the scanner thread to
+//! the GUI thread, so all variants must be `Send + Sync`. `ScanError` stores
+//! the error as `String` because `std::io::Error` does not implement
+//! `serde::Serialize`, making it incompatible with derive macros on the enum.
+//! (DL-004)
+
+use crate::tree::FileNode;
+use serde::{Deserialize, Serialize};
+use std::path::PathBuf;
+
+#[derive(Clone, Debug)]
+pub enum ScanEvent {
+    NodeDiscovered {
+        node: FileNode,
+        parent_index: Option<usize>,
+    },
+    Progress {
+        files_scanned: u64,
+        bytes_scanned: u64,
+    },
+    DuplicateFound {
+        hash: [u8; 32],
+        node_indices: Vec<usize>,
+    },
+    ScanComplete {
+        stats: ScanStats,
+    },
+    ScanError {
+        path: PathBuf,
+        error: String,
+    },
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct ScanStats {
+    pub total_files: u64,
+    pub total_dirs: u64,
+    pub total_bytes: u64,
+    pub duration_ms: u64,
+    pub errors: u64,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct ScanConfig {
+    pub root: PathBuf,
+    pub follow_symlinks: bool,
+    pub exclude_patterns: Vec<String>,
+    pub hash_duplicates: bool,
+    pub max_nodes: Option<usize>,
+}
+
+impl Default for ScanConfig {
+    fn default() -> Self {
+        ScanConfig {
+            root: PathBuf::new(),
+            follow_symlinks: false,
+            exclude_patterns: Vec::new(),
+            hash_duplicates: true,
+            max_nodes: Some(10_000_000),
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn scan_config_defaults() {
+        let config = ScanConfig::default();
+        assert!(!config.follow_symlinks);
+        assert!(config.hash_duplicates);
+        assert_eq!(config.max_nodes, Some(10_000_000));
+        assert!(config.exclude_patterns.is_empty());
+    }
+
+    #[test]
+    fn scan_event_node_discovered_construction() {
+        let node = FileNode {
+            name: "test.txt".to_string(),
+            size: 1024,
+            is_dir: false,
+            children: Vec::new(),
+            parent: None,
+            extension: Some("txt".to_string()),
+            modified: None,
+        };
+        let event = ScanEvent::NodeDiscovered {
+            node: node.clone(),
+            parent_index: Some(0),
+        };
+        if let ScanEvent::NodeDiscovered {
+            node: n,
+            parent_index,
+        } = event
+        {
+            assert_eq!(n.name, "test.txt");
+            assert_eq!(parent_index, Some(0));
+        } else {
+            panic!("Expected NodeDiscovered variant");
+        }
+    }
+
+    #[test]
+    fn scan_event_is_send_and_sync() {
+        fn assert_send<T: Send>() {}
+        fn assert_sync<T: Sync>() {}
+        assert_send::<ScanEvent>();
+        assert_sync::<ScanEvent>();
+    }
+
+    #[test]
+    fn scan_config_is_send_and_sync() {
+        fn assert_send<T: Send>() {}
+        fn assert_sync<T: Sync>() {}
+        assert_send::<ScanConfig>();
+        assert_sync::<ScanConfig>();
+    }
+}
