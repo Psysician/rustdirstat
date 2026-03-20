@@ -17,7 +17,7 @@ struct Cli {
 /// a usable starting layout for the treemap without requiring the user to resize first.
 /// Returns eframe::Result so OS-level window errors propagate to the process exit code.
 fn main() -> eframe::Result {
-    let _cli = Cli::parse();
+    let cli = Cli::parse();
 
     tracing_subscriber::fmt::init();
 
@@ -29,6 +29,6 @@ fn main() -> eframe::Result {
     eframe::run_native(
         "rustdirstat",
         native_options,
-        Box::new(|_cc| Ok(Box::new(rds_gui::RustDirStatApp))),
+        Box::new(|_cc| Ok(Box::new(rds_gui::RustDirStatApp::new(cli.path)))),
     )
 }

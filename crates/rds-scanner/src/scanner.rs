@@ -6,12 +6,12 @@ use std::thread::{self, JoinHandle};
 use std::time::{Instant, UNIX_EPOCH};
 
 use crossbeam_channel::Sender;
+use jwalk::WalkDir;
 use rds_core::scan::{ScanConfig, ScanEvent, ScanStats};
 use rds_core::tree::FileNode;
 use tracing::{debug, warn};
-use walkdir::WalkDir;
 
-/// Single-threaded filesystem scanner. Spawn via [`Scanner::scan`].
+/// Filesystem scanner using jwalk parallel traversal. Spawn via [`Scanner::scan`].
 pub struct Scanner;
 
 fn epoch_seconds(metadata: &std::fs::Metadata) -> Option<u64> {
@@ -39,11 +39,7 @@ fn send_root_node(
     };
 
     let root_modified = epoch_seconds(&root_metadata);
-    let root_name = config
-        .root
-        .file_name()
-        .map(|n| n.to_string_lossy().into_owned())
-        .unwrap_or_else(|| config.root.to_string_lossy().into_owned());
+    let root_name = config.root.to_string_lossy().into_owned();
 
     let root_node = FileNode {
         name: root_name,
@@ -69,15 +65,14 @@ fn send_root_node(
     Ok(())
 }
 
-fn entry_to_node(entry: &walkdir::DirEntry) -> FileNode {
+fn entry_to_node(entry: &jwalk::DirEntry<((), ())>) -> Result<FileNode, String> {
     let is_dir = entry.file_type().is_dir();
-    let (size, modified) = match entry.metadata() {
-        Ok(ref m) => {
-            let sz = if is_dir { 0 } else { m.len() };
-            (sz, epoch_seconds(m))
-        }
-        Err(_) => (0, None),
-    };
+    let metadata = entry
+        .metadata()
+        .map_err(|e| format!("{}: {e}", entry.path().display()))?;
+
+    let size = if is_dir { 0 } else { metadata.len() };
+    let modified = epoch_seconds(&metadata);
 
     let ext = if is_dir {
         None
@@ -90,7 +85,7 @@ fn entry_to_node(entry: &walkdir::DirEntry) -> FileNode {
 
     let name = entry.file_name().to_string_lossy().into_owned();
 
-    FileNode {
+    Ok(FileNode {
         name,
         size,
         is_dir,
@@ -98,7 +93,7 @@ fn entry_to_node(entry: &walkdir::DirEntry) -> FileNode {
         parent: None,
         extension: ext,
         modified,
-    }
+    })
 }
 
 struct WalkAccum {
@@ -109,7 +104,117 @@ struct WalkAccum {
     node_count: usize,
 }
 
+enum EntryAction {
+    Skip,
+    Process(jwalk::DirEntry<((), ())>, PathBuf),
+}
+
+/// Resolves a jwalk iterator result into either an entry to process or a skip.
+///
+/// On `Err`: sends `ScanError`, increments error counter, returns `Skip`.
+/// On `Ok` where path == root: returns `Skip` (root already emitted).
+/// On `Ok` with a `read_children_error`: sends `ScanError` for the readdir
+/// failure, then falls through to return the entry for normal processing.
+fn process_entry_result(
+    entry_result: Result<jwalk::DirEntry<((), ())>, jwalk::Error>,
+    root: &std::path::Path,
+    tx: &Sender<ScanEvent>,
+    acc: &mut WalkAccum,
+) -> EntryAction {
+    let entry = match entry_result {
+        Ok(e) => e,
+        Err(e) => {
+            let err_path = e.path().map(|p| p.to_path_buf()).unwrap_or_default();
+            warn!(path = %err_path.display(), error = %e, "jwalk error");
+            let _ = tx.send(ScanEvent::ScanError {
+                path: err_path,
+                error: e.to_string(),
+            });
+            acc.errors += 1;
+            return EntryAction::Skip;
+        }
+    };
+
+    let entry_path = entry.path().to_path_buf();
+    if entry_path == root {
+        return EntryAction::Skip;
+    }
+
+    if let Some(ref read_err) = entry.read_children_error {
+        warn!(
+            path = %entry_path.display(),
+            error = %read_err,
+            "directory read error"
+        );
+        let _ = tx.send(ScanEvent::ScanError {
+            path: entry_path.clone(),
+            error: read_err.to_string(),
+        });
+        acc.errors += 1;
+    }
+
+    EntryAction::Process(entry, entry_path)
+}
+
+/// Converts an entry to a `FileNode`, sends `NodeDiscovered`, and updates
+/// bookkeeping (stats + path-to-index map).
+///
+/// Returns `Err(())` when the channel is closed (receiver dropped).
+fn emit_node(
+    entry: &jwalk::DirEntry<((), ())>,
+    entry_path: PathBuf,
+    parent_idx: usize,
+    tx: &Sender<ScanEvent>,
+    path_to_index: &mut HashMap<PathBuf, usize>,
+    acc: &mut WalkAccum,
+) -> Result<(), ()> {
+    let node = match entry_to_node(entry) {
+        Ok(n) => n,
+        Err(error) => {
+            warn!(path = %entry_path.display(), %error, "metadata error");
+            let _ = tx.send(ScanEvent::ScanError {
+                path: entry_path,
+                error,
+            });
+            acc.errors += 1;
+            return Ok(());
+        }
+    };
+    let is_dir = node.is_dir;
+    let size = node.size;
+
+    if tx
+        .send(ScanEvent::NodeDiscovered {
+            node,
+            parent_index: Some(parent_idx),
+        })
+        .is_err()
+    {
+        return Err(());
+    }
+
+    if is_dir {
+        acc.total_dirs += 1;
+    } else {
+        acc.total_files += 1;
+        acc.total_bytes += size;
+    }
+
+    path_to_index.insert(entry_path, acc.node_count);
+    acc.node_count += 1;
+    Ok(())
+}
+
 impl Scanner {
+    /// Spawns a background thread that traverses `config.root` and sends
+    /// [`ScanEvent`] values to `tx`.
+    ///
+    /// The first event is always `NodeDiscovered` for the root with
+    /// `parent_index: None`. `ScanComplete` is always the last event, even
+    /// on cancellation or error. `ScanError` does not consume an arena index.
+    ///
+    /// `cancel` is checked at each iteration step and inside the jwalk
+    /// `process_read_dir` callback for earliest possible abort (ref: DL-002).
     pub fn scan(
         config: ScanConfig,
         tx: Sender<ScanEvent>,
@@ -118,6 +223,12 @@ impl Scanner {
         thread::spawn(move || {
             let start = Instant::now();
             let mut path_to_index: HashMap<PathBuf, usize> = HashMap::new();
+            // path_to_index is only accessed from this thread (the jwalk result
+            // iterator runs on the calling thread); process_read_dir callbacks run
+            // on rayon threads and never touch it, so no synchronization is needed.
+            // Signals process_read_dir to stop spawning new readdir work when
+            // the node count ceiling is reached on the main thread (ref: DL-003).
+            let max_nodes_reached = Arc::new(AtomicBool::new(false));
 
             if send_root_node(&config, &tx, &mut path_to_index).is_err() {
                 let _ = tx.send(ScanEvent::ScanComplete {
@@ -140,7 +251,14 @@ impl Scanner {
                 node_count: 1,
             };
 
-            Self::walk_entries(&config, &tx, &cancel, &mut path_to_index, &mut acc);
+            Self::walk_entries(
+                &config,
+                &tx,
+                &cancel,
+                &max_nodes_reached,
+                &mut path_to_index,
+                &mut acc,
+            );
 
             debug!(
                 files = acc.total_files,
@@ -162,14 +280,65 @@ impl Scanner {
         })
     }
 
+    /// Iterates jwalk entries and sends [`ScanEvent`] values to `tx`.
+    ///
+    /// jwalk configuration:
+    /// - `skip_hidden(false)`: jwalk defaults to skipping hidden files; this
+    ///   disables that behavior to include dotfiles in the scan (ref: DL-004).
+    /// - `follow_links`: controlled by `ScanConfig::follow_symlinks`. When
+    ///   true, jwalk detects symlink cycles via path-string comparison rather
+    ///   than inode comparison. String comparison is more conservative (may
+    ///   report false positives on hardlinked directories) but never misses
+    ///   real loops. Default is false, so this code path is not exercised in
+    ///   normal operation (ref: DL-009).
+    /// - `process_read_dir`: runs on rayon worker threads. Clears `children`
+    ///   when `cancel` or `max_nodes_reached` is true, preventing new readdir
+    ///   work from being scheduled. Sets `read_children_path = None` on each
+    ///   directory entry before clearing so jwalk does not schedule those
+    ///   subdirectory reads (ref: DL-008).
+    ///
+    /// Two-level abort:
+    /// 1. `process_read_dir` stops new readdir work at the rayon layer.
+    /// 2. `cancel` check at iteration top discards already-queued entries.
+    ///
+    /// Error handling:
+    /// - Iterator `Err` values: jwalk::Error (Io, Loop, ThreadpoolBusy).
+    ///   Path extracted via `Error::path()`, falls back to empty PathBuf for
+    ///   ThreadpoolBusy which carries no path (ref: DL-005).
+    /// - `entry.read_children_error`: directory readdir failure surfaced on
+    ///   an Ok entry; emitted as ScanError without consuming an arena index
+    ///   (ref: DL-005).
+    ///
+    /// `max_nodes_reached` is set to `true` on the main thread when the node
+    /// ceiling is hit. The `process_read_dir` callback reads this flag to stop
+    /// spawning new work. A bool flag avoids atomic counter contention on the
+    /// hot path; the main thread still enforces the exact limit (ref: DL-003).
     fn walk_entries(
         config: &ScanConfig,
         tx: &Sender<ScanEvent>,
         cancel: &Arc<AtomicBool>,
+        max_nodes_reached: &Arc<AtomicBool>,
         path_to_index: &mut HashMap<PathBuf, usize>,
         acc: &mut WalkAccum,
     ) {
-        let walker = WalkDir::new(&config.root).follow_links(config.follow_symlinks);
+        // Clone Arc handles for move into process_read_dir closure (ref: DL-002).
+        let cancel_flag = Arc::clone(cancel);
+        let mnr_flag = Arc::clone(max_nodes_reached);
+
+        let walker = WalkDir::new(&config.root)
+            .skip_hidden(false)
+            .follow_links(config.follow_symlinks)
+            // process_read_dir runs on rayon threads. Sets read_children_path=None
+            // first to prevent subdirectory scheduling, then clears children to
+            // prevent entries from being yielded. Order is required (ref: DL-008).
+            .process_read_dir(move |_depth, _path, _state, children| {
+                if cancel_flag.load(Ordering::Relaxed) || mnr_flag.load(Ordering::Relaxed) {
+                    for e in children.iter_mut().flatten() {
+                        e.read_children_path = None;
+                    }
+                    children.clear();
+                }
+            });
 
         for entry_result in walker {
             if cancel.load(Ordering::Relaxed) {
@@ -179,6 +348,7 @@ impl Scanner {
             if let Some(max) = config.max_nodes
                 && acc.node_count >= max
             {
+                max_nodes_reached.store(true, Ordering::Relaxed);
                 let _ = tx.send(ScanEvent::ScanError {
                     path: config.root.clone(),
                     error: format!("max_nodes limit ({max}) reached, aborting scan"),
@@ -187,24 +357,11 @@ impl Scanner {
                 break;
             }
 
-            let entry = match entry_result {
-                Ok(e) => e,
-                Err(e) => {
-                    let err_path = e.path().map(|p| p.to_path_buf()).unwrap_or_default();
-                    warn!(path = %err_path.display(), error = %e, "walkdir error");
-                    let _ = tx.send(ScanEvent::ScanError {
-                        path: err_path,
-                        error: e.to_string(),
-                    });
-                    acc.errors += 1;
-                    continue;
-                }
-            };
-
-            let entry_path = entry.path().to_path_buf();
-            if entry_path == config.root {
-                continue;
-            }
+            let (entry, entry_path) =
+                match process_entry_result(entry_result, &config.root, tx, acc) {
+                    EntryAction::Skip => continue,
+                    EntryAction::Process(e, p) => (e, p),
+                };
 
             let parent_path = match entry_path.parent() {
                 Some(p) => p.to_path_buf(),
@@ -228,29 +385,9 @@ impl Scanner {
                 }
             };
 
-            let node = entry_to_node(&entry);
-            let is_dir = node.is_dir;
-            let size = node.size;
-
-            if tx
-                .send(ScanEvent::NodeDiscovered {
-                    node,
-                    parent_index: Some(parent_idx),
-                })
-                .is_err()
-            {
+            if emit_node(&entry, entry_path, parent_idx, tx, path_to_index, acc).is_err() {
                 return;
             }
-
-            if is_dir {
-                acc.total_dirs += 1;
-            } else {
-                acc.total_files += 1;
-                acc.total_bytes += size;
-            }
-
-            path_to_index.insert(entry_path, acc.node_count);
-            acc.node_count += 1;
 
             if acc.node_count.is_multiple_of(100) {
                 let _ = tx.send(ScanEvent::Progress {

@@ -9,8 +9,10 @@ edition = "2024"
 
 [dependencies]
 rds-core = { workspace = true }
+rds-scanner = { workspace = true }
 eframe = { workspace = true }
 egui = { workspace = true }
 streemap = { workspace = true }
 crossbeam-channel = { workspace = true }
 tracing = { workspace = true }
+rfd = { workspace = true }

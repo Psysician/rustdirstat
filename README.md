@@ -7,7 +7,7 @@ Cross-platform disk usage analyzer. Rust reimplementation of WinDirStat.
 | Crate | Purpose | Key constraint |
 |-------|---------|----------------|
 | `rds-core` | Shared data types | Zero deps beyond `serde` |
-| `rds-scanner` | Parallel filesystem scan + SHA-2 hashing | Uses `jwalk` + `rayon` |
+| `rds-scanner` | Parallel filesystem scan; streams ScanEvent over bounded channel | Uses `jwalk` + `rayon` |
 | `rds-gui` | egui/eframe immediate-mode GUI + treemap | Uses `eframe`, `egui`, `streemap` |
 | `rustdirstat` (root) | CLI entry point + eframe bootstrap | Uses `clap`, `eframe` |
 

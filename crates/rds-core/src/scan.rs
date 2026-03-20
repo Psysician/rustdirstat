@@ -57,7 +57,7 @@ impl Default for ScanConfig {
             root: PathBuf::new(),
             follow_symlinks: false,
             exclude_patterns: Vec::new(),
-            hash_duplicates: true,
+            hash_duplicates: false,
             max_nodes: Some(10_000_000),
         }
     }
@@ -71,7 +71,7 @@ mod tests {
     fn scan_config_defaults() {
         let config = ScanConfig::default();
         assert!(!config.follow_symlinks);
-        assert!(config.hash_duplicates);
+        assert!(!config.hash_duplicates);
         assert_eq!(config.max_nodes, Some(10_000_000));
         assert!(config.exclude_patterns.is_empty());
     }
