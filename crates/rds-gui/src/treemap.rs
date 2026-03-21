@@ -828,4 +828,58 @@ mod tests {
         build_cushion_mesh(&mut mesh, rel.translate(egui::vec2(60.0, 0.0)), egui::Vec2::ZERO, &c, base);
         assert!(mesh.vertices.len() > first_count, "second call should add more vertices");
     }
+
+    #[test]
+    fn performance_50k_layout_and_mesh() {
+        // Build a tree with 100 dirs x 500 files = 50,000 leaf files.
+        let mut tree = DirTree::new("/root");
+        for d in 0..100 {
+            let dir = tree.insert(0, make_dir(&format!("dir_{d}")));
+            for f in 0..500 {
+                tree.insert(dir, make_file(
+                    &format!("file_{f}.rs"),
+                    (f as u64 + 1) * 100,
+                    Some("rs"),
+                ));
+            }
+        }
+        let stats = SubtreeStats::compute(&tree);
+
+        // Time the layout computation (includes cushion coefficient accumulation).
+        let start = std::time::Instant::now();
+        let layout = TreemapLayout::compute(&tree, &stats, egui::vec2(1920.0, 1080.0));
+        let layout_elapsed = start.elapsed();
+
+        assert_eq!(layout.rects.len(), 50_000);
+        assert!(
+            layout_elapsed.as_secs() < 2,
+            "layout took {layout_elapsed:?}, expected < 2s",
+        );
+
+        // Time mesh construction for all cushion-eligible rects.
+        let start = std::time::Instant::now();
+        let mut mesh = egui::Mesh::default();
+        let offset = egui::Vec2::ZERO;
+        for rect_info in &layout.rects {
+            if rect_info.rect.width() >= MIN_CUSHION_DIM
+                && rect_info.rect.height() >= MIN_CUSHION_DIM
+            {
+                build_cushion_mesh(
+                    &mut mesh,
+                    rect_info.rect.shrink(0.5),
+                    offset,
+                    &rect_info.cushion,
+                    rect_info.color,
+                );
+            }
+        }
+        let mesh_elapsed = start.elapsed();
+
+        assert!(
+            mesh_elapsed.as_secs() < 2,
+            "mesh build took {mesh_elapsed:?}, expected < 2s (vertices: {}, indices: {})",
+            mesh.vertices.len(),
+            mesh.indices.len(),
+        );
+    }
 }
