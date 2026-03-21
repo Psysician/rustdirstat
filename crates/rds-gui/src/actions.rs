@@ -198,4 +198,11 @@ mod tests {
         // compiles, doesn't panic, and returns a Result.
         let _ = result;
     }
+
+    #[test]
+    fn open_invalid_index_returns_error() {
+        let tree = DirTree::new("/some/root");
+        let result = open_in_file_manager(&tree, 999);
+        assert!(result.is_err());
+    }
 }
