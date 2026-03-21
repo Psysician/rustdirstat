@@ -438,4 +438,92 @@ mod tests {
         let path = tree.path(idx_file);
         assert_eq!(path, PathBuf::from("/root/dir_a/file.txt"));
     }
+
+    #[test]
+    fn tombstone_already_tombstoned_is_idempotent() {
+        let mut tree = DirTree::new("/root");
+        let file_a = make_file_node("a.txt", 100);
+        let idx_a = tree.insert(0, file_a);
+        let file_b = make_file_node("b.txt", 200);
+        let idx_b = tree.insert(0, file_b);
+
+        tree.tombstone(idx_a);
+
+        // Snapshot state after first tombstone.
+        let root_children_after_first: Vec<usize> = tree.get(0).unwrap().children.clone();
+        let node_a_deleted = tree.get(idx_a).unwrap().deleted;
+        let node_a_size = tree.get(idx_a).unwrap().size;
+        let arena_len = tree.len();
+
+        // Tombstone the same node again — should not panic or double-remove.
+        tree.tombstone(idx_a);
+
+        // State unchanged: still deleted, still zero size, arena same length.
+        assert!(tree.get(idx_a).unwrap().deleted);
+        assert_eq!(tree.get(idx_a).unwrap().size, 0);
+        assert_eq!(tree.len(), arena_len);
+        assert_eq!(tree.get(0).unwrap().children, root_children_after_first);
+        // Sibling b.txt is unaffected.
+        assert!(!tree.get(idx_b).unwrap().deleted);
+        assert_eq!(tree.get(idx_b).unwrap().size, 200);
+        // Sanity: first tombstone did mark it.
+        assert!(node_a_deleted);
+        assert_eq!(node_a_size, 0);
+    }
+
+    #[test]
+    fn tombstone_leaf_in_deep_tree_reduces_ancestor_subtree_sizes() {
+        // Build a 5-level deep tree: root -> d1 -> d2 -> d3 -> d4 -> leaf (500 bytes)
+        // Plus a sibling file at each level to verify only the leaf's size is removed.
+        let mut tree = DirTree::new("/root");
+        let d1 = tree.insert(0, make_dir_node("d1"));
+        let f_root = tree.insert(0, make_file_node("root_file.txt", 10));
+        let d2 = tree.insert(d1, make_dir_node("d2"));
+        let f_d1 = tree.insert(d1, make_file_node("d1_file.txt", 20));
+        let d3 = tree.insert(d2, make_dir_node("d3"));
+        let f_d2 = tree.insert(d2, make_file_node("d2_file.txt", 30));
+        let d4 = tree.insert(d3, make_dir_node("d4"));
+        let f_d3 = tree.insert(d3, make_file_node("d3_file.txt", 40));
+        let leaf = tree.insert(d4, make_file_node("deep_leaf.txt", 500));
+
+        // Before tombstone: total = 10+20+30+40+500 = 600
+        assert_eq!(tree.subtree_size(0), 600);
+        assert_eq!(tree.subtree_size(d1), 590);
+        assert_eq!(tree.subtree_size(d2), 570);
+        assert_eq!(tree.subtree_size(d3), 540);
+        assert_eq!(tree.subtree_size(d4), 500);
+
+        tree.tombstone(leaf);
+
+        // After tombstone: the leaf's 500 bytes removed from every ancestor.
+        assert_eq!(tree.subtree_size(0), 100);
+        assert_eq!(tree.subtree_size(d1), 90);
+        assert_eq!(tree.subtree_size(d2), 70);
+        assert_eq!(tree.subtree_size(d3), 40);
+        assert_eq!(tree.subtree_size(d4), 0);
+
+        // Sibling files unaffected.
+        assert_eq!(tree.get(f_root).unwrap().size, 10);
+        assert_eq!(tree.get(f_d1).unwrap().size, 20);
+        assert_eq!(tree.get(f_d2).unwrap().size, 30);
+        assert_eq!(tree.get(f_d3).unwrap().size, 40);
+    }
+
+    #[test]
+    fn tombstone_removes_from_parent_children_iteration() {
+        let mut tree = DirTree::new("/root");
+        let file_a = tree.insert(0, make_file_node("a.txt", 100));
+        let file_b = tree.insert(0, make_file_node("b.txt", 200));
+        let file_c = tree.insert(0, make_file_node("c.txt", 300));
+
+        // Tombstone the middle child.
+        tree.tombstone(file_b);
+
+        // Iterating parent's children must not include the tombstoned index.
+        let children: Vec<usize> = tree.children(0).to_vec();
+        assert!(!children.contains(&file_b), "tombstoned index should not appear in parent's children");
+        assert!(children.contains(&file_a), "non-tombstoned sibling a should remain");
+        assert!(children.contains(&file_c), "non-tombstoned sibling c should remain");
+        assert_eq!(children.len(), 2);
+    }
 }

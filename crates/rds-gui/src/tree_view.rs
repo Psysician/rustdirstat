@@ -550,4 +550,97 @@ mod tests {
         // small.txt (index 1) should be excluded.
         assert_eq!(sorted, vec![2, 3]);
     }
+
+    #[test]
+    fn stats_recompute_after_tombstone_directory_reflects_decreased_totals() {
+        // Build tree:
+        //   /root
+        //   ├── dir_a/         (contains 300 bytes across 2 files)
+        //   │   ├── a1.txt  100
+        //   │   └── a2.txt  200
+        //   ├── dir_b/         (contains 750 bytes across 3 files)
+        //   │   ├── b1.txt  250
+        //   │   ├── b2.txt  250
+        //   │   └── b3.txt  250
+        //   └── top.txt      50
+        let mut tree = DirTree::new("/root");
+        let dir_a = tree.insert(0, make_dir("dir_a"));
+        tree.insert(dir_a, make_file("a1.txt", 100));
+        tree.insert(dir_a, make_file("a2.txt", 200));
+        let dir_b = tree.insert(0, make_dir("dir_b"));
+        tree.insert(dir_b, make_file("b1.txt", 250));
+        tree.insert(dir_b, make_file("b2.txt", 250));
+        tree.insert(dir_b, make_file("b3.txt", 250));
+        tree.insert(0, make_file("top.txt", 50));
+
+        // Before: root = 1100 bytes, 6 files.
+        let stats_before = SubtreeStats::compute(&tree);
+        assert_eq!(stats_before.size(0), 1100);
+        assert_eq!(stats_before.file_count(0), 6);
+        assert_eq!(stats_before.size(dir_a), 300);
+        assert_eq!(stats_before.file_count(dir_a), 2);
+        assert_eq!(stats_before.size(dir_b), 750);
+        assert_eq!(stats_before.file_count(dir_b), 3);
+
+        // Tombstone dir_a (removes 300 bytes and 2 files).
+        tree.tombstone(dir_a);
+
+        let stats_after = SubtreeStats::compute(&tree);
+        assert_eq!(
+            stats_after.size(0), 800,
+            "root size should decrease by tombstoned subtree (300)"
+        );
+        assert_eq!(
+            stats_after.file_count(0), 4,
+            "root file count should decrease by tombstoned files (2)"
+        );
+        // dir_b and top.txt remain unchanged.
+        assert_eq!(stats_after.size(dir_b), 750);
+        assert_eq!(stats_after.file_count(dir_b), 3);
+        // dir_a itself reports 0.
+        assert_eq!(stats_after.size(dir_a), 0);
+        assert_eq!(stats_after.file_count(dir_a), 0);
+    }
+
+    #[test]
+    fn stats_tombstone_all_children_yields_zero_size_and_count() {
+        // Build tree:
+        //   /root
+        //   └── parent_dir/
+        //       ├── child1.txt  400
+        //       ├── child2.txt  600
+        //       └── sub/
+        //           └── deep.txt  1000
+        let mut tree = DirTree::new("/root");
+        let parent_dir = tree.insert(0, make_dir("parent_dir"));
+        let child1 = tree.insert(parent_dir, make_file("child1.txt", 400));
+        let child2 = tree.insert(parent_dir, make_file("child2.txt", 600));
+        let sub = tree.insert(parent_dir, make_dir("sub"));
+        tree.insert(sub, make_file("deep.txt", 1000));
+
+        // Before: parent_dir = 2000 bytes, 3 files.
+        let stats_before = SubtreeStats::compute(&tree);
+        assert_eq!(stats_before.size(parent_dir), 2000);
+        assert_eq!(stats_before.file_count(parent_dir), 3);
+
+        // Tombstone all children of parent_dir one by one.
+        tree.tombstone(child1);
+        tree.tombstone(child2);
+        tree.tombstone(sub); // also removes deep.txt
+
+        let stats_after = SubtreeStats::compute(&tree);
+        assert_eq!(
+            stats_after.size(parent_dir), 0,
+            "directory with all children tombstoned should show 0 size"
+        );
+        assert_eq!(
+            stats_after.file_count(parent_dir), 0,
+            "directory with all children tombstoned should show 0 file count"
+        );
+        // parent_dir itself is not deleted — it just has no live children.
+        assert!(!tree.get(parent_dir).unwrap().deleted);
+        // Root stats also reflect the change.
+        assert_eq!(stats_after.size(0), 0);
+        assert_eq!(stats_after.file_count(0), 0);
+    }
 }
