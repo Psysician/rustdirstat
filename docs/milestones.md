@@ -72,7 +72,7 @@ Implement `TreemapRenderer` with flat colored rectangles (no cushion shading yet
 
 ---
 
-## MS9 — Treemap Cushion Shading
+## ~~MS9 — Treemap Cushion Shading~~ DONE
 
 Add cushion shading to treemap renderer. Implement cushion function `I(x,y)` with per-vertex color mesh via `Shape::Mesh`. Depth-based intensity. Fallback to flat for rectangles <4px. Performance test with 50k+ rectangles.
 
