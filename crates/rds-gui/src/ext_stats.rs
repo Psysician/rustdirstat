@@ -10,7 +10,7 @@ use rds_core::stats::{ExtensionStats, HslColor};
 /// an `egui::Color32`. Used for rendering swatches and bar chart segments.
 /// Will also serve MS8 treemap coloring. (ref: DL-001)
 pub(crate) fn hsl_to_color32(hsl: &HslColor) -> egui::Color32 {
-    let h = hsl.h;
+    let h = hsl.h.rem_euclid(360.0);
     let s = hsl.s;
     let l = hsl.l;
 
@@ -59,17 +59,33 @@ pub(crate) fn show(ext_stats: &[ExtensionStats], ui: &mut egui::Ui) {
         if remaining <= 0.0 {
             break;
         }
-        let segment_width = (stat.percentage as f32 / 100.0) * bar_rect.width();
+        let segment_width = (stat.percentage / 100.0) as f32 * bar_rect.width();
         if segment_width < 1.0 {
             continue;
         }
-        let w = segment_width.max(2.0).min(remaining);
+        let w = segment_width.min(remaining);
         let segment = egui::Rect::from_min_size(
             egui::pos2(x, bar_rect.top()),
             egui::vec2(w, bar_height),
         );
-        ui.painter()
-            .rect_filled(segment, 0.0, hsl_to_color32(&stat.color));
+        let color = hsl_to_color32(&stat.color);
+        ui.painter().rect_filled(segment, 0.0, color);
+
+        let display_name = if stat.extension.is_empty() {
+            "(no ext)"
+        } else {
+            &stat.extension
+        };
+        let hover_text = format!(
+            "{}: {} ({:.1}%)",
+            display_name,
+            super::format_bytes(stat.total_bytes),
+            stat.percentage,
+        );
+        let segment_response =
+            ui.allocate_rect(segment, egui::Sense::hover());
+        segment_response.on_hover_text(hover_text);
+
         x += w;
     }
 
