@@ -5,6 +5,7 @@
 //! groups after deletions. `open_in_file_manager` reveals a file or directory
 //! in the platform's native file manager.
 
+use rds_core::CustomCommand;
 use rds_core::tree::DirTree;
 
 use crate::DuplicateGroup;
@@ -105,6 +106,48 @@ fn open_file_revealing(path: &std::path::Path) -> Result<(), String> {
     {
         let target = path.parent().unwrap_or(path);
         open::that_detached(target).map_err(|e| e.to_string())
+    }
+}
+
+/// Executes a user-defined custom command for the filesystem entry at `index`.
+///
+/// Replaces `{path}` in the command template with the full path of the node,
+/// then spawns the resolved command in a platform-specific shell (fire-and-forget).
+#[allow(dead_code)]
+pub(crate) fn execute_custom_command(
+    tree: &DirTree,
+    index: usize,
+    command: &CustomCommand,
+) -> Result<(), String> {
+    tree.get(index)
+        .ok_or_else(|| format!("node at index {index} not found"))?;
+
+    let path = tree.path(index);
+    let resolved_command = command.template.replace("{path}", &path.to_string_lossy());
+
+    #[cfg(not(target_os = "windows"))]
+    let spawn_result = std::process::Command::new("sh")
+        .arg("-c")
+        .arg(&resolved_command)
+        .spawn()
+        .map_err(|e| e.to_string());
+
+    #[cfg(target_os = "windows")]
+    let spawn_result = std::process::Command::new("cmd")
+        .arg("/c")
+        .arg(&resolved_command)
+        .spawn()
+        .map_err(|e| e.to_string());
+
+    match spawn_result {
+        Ok(_child) => {
+            tracing::debug!("{}: {}", command.name, resolved_command);
+            Ok(())
+        }
+        Err(e) => {
+            tracing::warn!("failed to execute '{}': {e}", command.name);
+            Err(e)
+        }
     }
 }
 
@@ -210,5 +253,44 @@ mod tests {
         let tree = DirTree::new("/some/root");
         let result = open_in_file_manager(&tree, 999);
         assert!(result.is_err());
+    }
+
+    #[test]
+    #[ignore]
+    fn execute_custom_command_substitutes_path() {
+        use rds_core::CustomCommand;
+
+        let tmp = tempfile::TempDir::new().unwrap();
+        let root_path = tmp.path();
+
+        let mut tree = DirTree::new(root_path.to_str().unwrap());
+        let file_idx = tree.insert(0, make_file_node("test.txt", 5));
+
+        let cmd = CustomCommand {
+            name: "Echo Path".to_string(),
+            template: "echo {path}".to_string(),
+        };
+
+        let result = execute_custom_command(&tree, file_idx, &cmd);
+        assert!(result.is_ok(), "execute_custom_command failed: {:?}", result.err());
+    }
+
+    #[test]
+    fn execute_custom_command_invalid_index_returns_error() {
+        use rds_core::CustomCommand;
+
+        let tree = DirTree::new("/some/root");
+        let cmd = CustomCommand {
+            name: "Test".to_string(),
+            template: "echo {path}".to_string(),
+        };
+
+        let result = execute_custom_command(&tree, 999, &cmd);
+        assert!(result.is_err());
+        assert!(
+            result.as_ref().unwrap_err().contains("not found"),
+            "expected 'not found' in error, got: {:?}",
+            result.err()
+        );
     }
 }
