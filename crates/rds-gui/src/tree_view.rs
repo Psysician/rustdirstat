@@ -240,19 +240,28 @@ fn render_node(
             state.pending_scroll = false;
         }
 
-        // Right-click context menu (only when scan is complete and not root).
-        if scan_complete && index != tree.root() {
-            response.context_menu(|ui| {
-                if ui.button("Delete").clicked() {
-                    let path = tree.path(index);
-                    let size = if is_dir { stats.size(index) } else { node.size };
-                    *pending_delete = Some(PendingDelete {
-                        node_index: index,
-                        path_display: path.display().to_string(),
-                        size_bytes: size,
-                        is_dir,
-                    });
+        // Right-click context menu (only when scan is complete).
+        // Re-interact to ensure secondary click detection works inside
+        // ScrollArea (whose drag sensing can shadow click responses).
+        if scan_complete {
+            response.interact(egui::Sense::click()).context_menu(|ui| {
+                if ui.button("Open in File Manager").clicked() {
+                    let _ = crate::actions::open_in_file_manager(tree, index);
                     ui.close();
+                }
+                if index != tree.root() {
+                    ui.separator();
+                    if ui.button("Delete").clicked() {
+                        let path = tree.path(index);
+                        let size = if is_dir { stats.size(index) } else { node.size };
+                        *pending_delete = Some(PendingDelete {
+                            node_index: index,
+                            path_display: path.display().to_string(),
+                            size_bytes: size,
+                            is_dir,
+                        });
+                        ui.close();
+                    }
                 }
             });
         }

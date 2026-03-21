@@ -17,3 +17,7 @@ crossbeam-channel = { workspace = true }
 tracing = { workspace = true }
 rfd = { workspace = true }
 trash = { workspace = true }
+open = { workspace = true }
+
+[dev-dependencies]
+tempfile = { workspace = true }
