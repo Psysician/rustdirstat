@@ -26,16 +26,16 @@ const INITIAL_HEIGHT: f32 = 40.0;
 const HEIGHT_FACTOR: f32 = 0.5;
 
 /// Ambient intensity floor. Prevents fully black edges. (ref: DL-007)
-#[allow(dead_code)] // Used in intensity() via tests now; wired in Task 3/4
+#[allow(dead_code)] // Wired in show() Task 4
 const AMBIENT: f32 = 0.3;
 
 /// Pre-normalized light direction toward upper-left.
 /// L = normalize(-0.5, -0.5, 1.0). (ref: DL-003)
-#[allow(dead_code)] // Used in intensity() via tests now; wired in Task 3/4
+#[allow(dead_code)] // Wired in show() Task 4
 const LIGHT_X: f32 = -0.408_248_3;
-#[allow(dead_code)] // Used in intensity() via tests now; wired in Task 3/4
+#[allow(dead_code)] // Wired in show() Task 4
 const LIGHT_Y: f32 = -0.408_248_3;
-#[allow(dead_code)] // Used in intensity() via tests now; wired in Task 3/4
+#[allow(dead_code)] // Wired in show() Task 4
 const LIGHT_Z: f32 = 0.816_496_6;
 
 /// Accumulated parabolic ridge coefficients for cushion shading.
@@ -65,7 +65,7 @@ impl CushionCoeffs {
         }
     }
 
-    #[allow(dead_code)] // Used in intensity() via tests now; wired in Task 3/4
+    #[allow(dead_code)] // Wired in show() Task 4
     fn intensity(&self, x: f32, y: f32) -> f32 {
         let dhdx = 2.0 * self.a2x * x + self.a1x;
         let dhdy = 2.0 * self.a2y * y + self.a1y;
@@ -77,7 +77,7 @@ impl CushionCoeffs {
     }
 }
 
-#[allow(dead_code)] // Used in Task 3
+#[allow(dead_code)] // Wired in show() Task 4
 fn shade_color(base: egui::Color32, intensity: f32) -> egui::Color32 {
     let [r, g, b, a] = base.to_array();
     egui::Color32::from_rgba_premultiplied(
@@ -88,7 +88,7 @@ fn shade_color(base: egui::Color32, intensity: f32) -> egui::Color32 {
     )
 }
 
-#[allow(dead_code)] // Used in Task 3
+#[allow(dead_code)] // Wired in show() Task 4
 fn grid_subdivisions(width: f32, height: f32) -> u32 {
     let min_dim = width.min(height);
     if min_dim < 20.0 {
@@ -97,6 +97,61 @@ fn grid_subdivisions(width: f32, height: f32) -> u32 {
         4
     } else {
         6
+    }
+}
+
+/// Appends a cushion-shaded mesh grid for one rectangle into the shared `mesh`.
+///
+/// `rel_rect` is in relative layout coordinates (already shrunk by 0.5 for gap).
+/// `offset` translates to screen-space for vertex positions.
+/// Intensity is computed from `cushion` at relative coordinates. (ref: DL-002, DL-006)
+#[allow(dead_code)] // Wired in show() Task 4
+fn build_cushion_mesh(
+    mesh: &mut egui::Mesh,
+    rel_rect: egui::Rect,
+    offset: egui::Vec2,
+    cushion: &CushionCoeffs,
+    base_color: egui::Color32,
+) {
+    let w = rel_rect.width();
+    let h = rel_rect.height();
+    if w <= 0.0 || h <= 0.0 {
+        return;
+    }
+
+    let n = grid_subdivisions(w, h) as usize;
+    let base_idx = mesh.vertices.len() as u32;
+
+    // Generate vertices with per-vertex cushion-modulated colors.
+    for row in 0..=n {
+        let t = row as f32 / n as f32;
+        let y = rel_rect.top() + t * h;
+
+        for col in 0..=n {
+            let s = col as f32 / n as f32;
+            let x = rel_rect.left() + s * w;
+
+            let intensity = cushion.intensity(x, y);
+            let color = shade_color(base_color, intensity);
+
+            mesh.vertices.push(egui::epaint::Vertex {
+                pos: egui::pos2(x + offset.x, y + offset.y),
+                uv: egui::epaint::WHITE_UV,
+                color,
+            });
+        }
+    }
+
+    // Generate triangle indices for the NxN quad grid.
+    let cols = (n + 1) as u32;
+    for row in 0..n as u32 {
+        for col in 0..n as u32 {
+            let tl = base_idx + row * cols + col;
+            let tr = tl + 1;
+            let bl = tl + cols;
+            let br = bl + 1;
+            mesh.indices.extend_from_slice(&[tl, bl, tr, tr, bl, br]);
+        }
     }
 }
 
@@ -674,5 +729,90 @@ mod tests {
         assert!(r.cushion.a1x != 0.0, "a1x should be non-zero");
         assert!(r.cushion.a2y != 0.0, "a2y should be non-zero");
         assert!(r.cushion.a1y != 0.0, "a1y should be non-zero");
+    }
+
+    // --- build_cushion_mesh tests ---
+
+    #[test]
+    fn build_mesh_vertex_and_index_counts() {
+        let mut c = CushionCoeffs::default();
+        c.add_ridge(
+            &streemap::Rect { x: 10.0, y: 10.0, w: 100.0, h: 100.0 },
+            40.0,
+        );
+        let rel_rect = egui::Rect::from_min_size(egui::pos2(10.0, 10.0), egui::vec2(100.0, 100.0));
+        let offset = egui::vec2(50.0, 50.0);
+        let base = egui::Color32::from_rgb(200, 100, 50);
+
+        let mut mesh = egui::Mesh::default();
+        build_cushion_mesh(&mut mesh, rel_rect.shrink(0.5), offset, &c, base);
+
+        // 99px after shrink → grid_subdivisions = 6
+        let n = 6_usize;
+        let expected_verts = (n + 1) * (n + 1);
+        let expected_indices = n * n * 6;
+        assert_eq!(mesh.vertices.len(), expected_verts, "vertex count");
+        assert_eq!(mesh.indices.len(), expected_indices, "index count");
+    }
+
+    #[test]
+    fn build_mesh_vertices_within_bounds() {
+        let mut c = CushionCoeffs::default();
+        c.add_ridge(
+            &streemap::Rect { x: 20.0, y: 30.0, w: 80.0, h: 60.0 },
+            40.0,
+        );
+        let rel_rect = egui::Rect::from_min_size(egui::pos2(20.0, 30.0), egui::vec2(80.0, 60.0));
+        let offset = egui::vec2(100.0, 200.0);
+        let base = egui::Color32::from_rgb(200, 100, 50);
+
+        let mut mesh = egui::Mesh::default();
+        build_cushion_mesh(&mut mesh, rel_rect.shrink(0.5), offset, &c, base);
+
+        let abs_rect = rel_rect.shrink(0.5).translate(offset);
+        for v in &mesh.vertices {
+            assert!(
+                v.pos.x >= abs_rect.left() - 0.01 && v.pos.x <= abs_rect.right() + 0.01
+                    && v.pos.y >= abs_rect.top() - 0.01 && v.pos.y <= abs_rect.bottom() + 0.01,
+                "vertex {:?} outside bounds {:?}",
+                v.pos, abs_rect,
+            );
+        }
+    }
+
+    #[test]
+    fn build_mesh_colors_vary() {
+        let mut c = CushionCoeffs::default();
+        c.add_ridge(
+            &streemap::Rect { x: 0.0, y: 0.0, w: 100.0, h: 100.0 },
+            40.0,
+        );
+        let rel_rect = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(100.0, 100.0));
+        let base = egui::Color32::from_rgb(200, 100, 50);
+
+        let mut mesh = egui::Mesh::default();
+        build_cushion_mesh(&mut mesh, rel_rect, egui::Vec2::ZERO, &c, base);
+
+        let first_color = mesh.vertices[0].color;
+        let has_different = mesh.vertices.iter().any(|v| v.color != first_color);
+        assert!(has_different, "all vertices have same color — no cushion effect");
+    }
+
+    #[test]
+    fn build_mesh_accumulates_into_existing() {
+        let mut c = CushionCoeffs::default();
+        c.add_ridge(
+            &streemap::Rect { x: 0.0, y: 0.0, w: 50.0, h: 50.0 },
+            40.0,
+        );
+        let rel = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(50.0, 50.0));
+        let base = egui::Color32::from_rgb(100, 100, 100);
+
+        let mut mesh = egui::Mesh::default();
+        build_cushion_mesh(&mut mesh, rel, egui::Vec2::ZERO, &c, base);
+        let first_count = mesh.vertices.len();
+
+        build_cushion_mesh(&mut mesh, rel.translate(egui::vec2(60.0, 0.0)), egui::Vec2::ZERO, &c, base);
+        assert!(mesh.vertices.len() > first_count, "second call should add more vertices");
     }
 }
