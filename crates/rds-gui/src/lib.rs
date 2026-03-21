@@ -201,6 +201,7 @@ impl RustDirStatApp {
             self.subtree_stats = Some(tree_view::SubtreeStats::compute(tree));
             self.tree_view_state.expand(tree.root());
         }
+        self.treemap_layout = None;
     }
 
     /// Drains up to 100 ScanEvent values from the channel per frame.
