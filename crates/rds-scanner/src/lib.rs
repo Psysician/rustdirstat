@@ -24,6 +24,7 @@
 //! Module structure: `scanner.rs` owns all scan logic; this crate root re-exports
 //! `Scanner` as the public API surface.
 
+mod duplicate;
 mod scanner;
 
 pub use scanner::Scanner;

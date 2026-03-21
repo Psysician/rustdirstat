@@ -21,8 +21,13 @@ pub enum ScanEvent {
         bytes_scanned: u64,
     },
     DuplicateFound {
+        /// SHA-256 of the file content. Retained for future "copy hash" /
+        /// verify actions; the GUI currently stores only node_indices.
         hash: [u8; 32],
         node_indices: Vec<usize>,
+    },
+    DuplicateDetectionStarted {
+        file_count: u64,
     },
     ScanComplete {
         stats: ScanStats,

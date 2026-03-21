@@ -1,8 +1,9 @@
 //! egui application shell with directory picker, scan progress, tree view,
 //! treemap, and extension statistics.
 //!
-//! `RustDirStatApp` owns scan state and renders a 3-panel layout: directory
-//! tree (MS6), treemap (MS8), and extension statistics (MS7).
+//! `RustDirStatApp` owns scan state and renders a 4-panel layout: directory
+//! tree (MS6), treemap (MS8), extension statistics (MS7), and duplicate
+//! file detection (MS12).
 //! The scanner runs on a background thread; events are drained via
 //! `try_recv()` each frame (bounded to 100 events to avoid blocking
 //! rendering). (ref: DL-003, DL-006)
@@ -18,6 +19,7 @@ use rds_core::scan::{ScanConfig, ScanEvent, ScanStats};
 use rds_core::stats::ExtensionStats;
 use rds_core::tree::DirTree;
 
+mod duplicates;
 mod ext_stats;
 mod tree_view;
 mod treemap;
@@ -30,6 +32,12 @@ enum ScanPhase {
     Scanning,
     /// Scanner finished; summary stats available.
     Complete(ScanStats),
+}
+
+/// A group of files with identical content, detected by SHA-256 hashing.
+pub(crate) struct DuplicateGroup {
+    pub(crate) node_indices: Vec<usize>,
+    pub(crate) wasted_bytes: u64,
 }
 
 /// Main application state. Holds the scan lifecycle, DirTree arena being
@@ -78,6 +86,13 @@ pub struct RustDirStatApp {
     /// Root node index for treemap drill-down. Defaults to `tree.root()` (0).
     /// Changed by double-click in treemap, navigated via breadcrumb. (ref: DL-006)
     treemap_root: usize,
+    /// Accumulated duplicate groups from DuplicateFound events, sorted by
+    /// wasted_bytes descending after scan completes.
+    duplicate_groups: Vec<DuplicateGroup>,
+    /// Whether to run duplicate detection on next scan.
+    hash_duplicates_enabled: bool,
+    /// True while the scanner is running the duplicate detection pipeline.
+    detecting_duplicates: bool,
 }
 
 impl Default for RustDirStatApp {
@@ -119,6 +134,9 @@ impl RustDirStatApp {
             treemap_layout: None,
             selected_extension: None,
             treemap_root: 0,
+            duplicate_groups: Vec::new(),
+            hash_duplicates_enabled: true,
+            detecting_duplicates: false,
         }
     }
 
@@ -163,6 +181,8 @@ impl RustDirStatApp {
         self.treemap_layout = None;
         self.selected_extension = None;
         self.treemap_root = 0;
+        self.duplicate_groups = Vec::new();
+        self.detecting_duplicates = false;
         self.path_error = None;
         self.phase = ScanPhase::Scanning;
         self.scan_path = Some(path.clone());
@@ -172,6 +192,7 @@ impl RustDirStatApp {
         let cancel = Arc::new(AtomicBool::new(false));
         let config = ScanConfig {
             root: path,
+            hash_duplicates: self.hash_duplicates_enabled,
             ..ScanConfig::default()
         };
 
@@ -192,6 +213,9 @@ impl RustDirStatApp {
         self.scan_start = None;
         self.last_live_recompute = None;
         self.live_node_count = 0;
+        self.detecting_duplicates = false;
+        self.duplicate_groups
+            .sort_by(|a, b| b.wasted_bytes.cmp(&a.wasted_bytes));
         if let Some(ref tree) = self.tree {
             self.extension_stats = Some(rds_core::stats::compute_extension_stats(tree));
         }
@@ -251,7 +275,22 @@ impl RustDirStatApp {
                 Ok(ScanEvent::ScanError { .. }) => {
                     self.scan_errors += 1;
                 }
-                Ok(ScanEvent::DuplicateFound { .. }) => {}
+                Ok(ScanEvent::DuplicateFound { node_indices, .. }) => {
+                    let size = node_indices
+                        .first()
+                        .and_then(|&idx| self.tree.as_ref()?.get(idx))
+                        .map(|node| node.size)
+                        .unwrap_or(0);
+                    let wasted_bytes =
+                        size.saturating_mul(node_indices.len().saturating_sub(1) as u64);
+                    self.duplicate_groups.push(DuplicateGroup {
+                        node_indices,
+                        wasted_bytes,
+                    });
+                }
+                Ok(ScanEvent::DuplicateDetectionStarted { .. }) => {
+                    self.detecting_duplicates = true;
+                }
                 Err(crossbeam_channel::TryRecvError::Empty) => return,
                 Err(crossbeam_channel::TryRecvError::Disconnected) => {
                     // Scanner thread exited without ScanComplete (shouldn't
@@ -360,8 +399,10 @@ impl eframe::App for RustDirStatApp {
                 ui.separator();
 
                 // Text input fallback — always works, including WSL2.
-                // Reserve ~60px for the Scan button; fill remaining width.
-                let text_width = (ui.available_width() - 60.0).max(100.0);
+                // Reserve space for: Scan button (~50px) + separator (~10px) +
+                // Detect Duplicates checkbox (~150px).
+                const TOOLBAR_FIXED_CONTROLS_WIDTH: f32 = 210.0;
+                let text_width = (ui.available_width() - TOOLBAR_FIXED_CONTROLS_WIDTH).max(100.0);
                 let response = ui.add(
                     egui::TextEdit::singleline(&mut self.path_input)
                         .hint_text("/path/to/scan")
@@ -371,8 +412,8 @@ impl eframe::App for RustDirStatApp {
                     self.path_error = None;
                 }
                 let scan_clicked = ui.button("Scan").clicked();
-                let enter_pressed = response.lost_focus()
-                    && ui.input(|i| i.key_pressed(egui::Key::Enter));
+                let enter_pressed =
+                    response.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
 
                 if (scan_clicked || enter_pressed) && !self.path_input.is_empty() {
                     let path = PathBuf::from(&self.path_input);
@@ -387,6 +428,9 @@ impl eframe::App for RustDirStatApp {
                 if let Some(ref err) = self.path_error {
                     ui.colored_label(egui::Color32::from_rgb(255, 100, 100), err);
                 }
+
+                ui.separator();
+                ui.checkbox(&mut self.hash_duplicates_enabled, "Detect Duplicates");
             });
         });
 
@@ -402,7 +446,14 @@ impl eframe::App for RustDirStatApp {
                         .map(|t| t.elapsed().as_secs_f64())
                         .unwrap_or(0.0);
 
-                    let mut text = if elapsed_secs < 0.01 {
+                    let mut text = if self.detecting_duplicates {
+                        format!(
+                            "Detecting duplicates\u{2026} {} files \u{00B7} {} \u{00B7} {:.1}s",
+                            self.files_scanned,
+                            format_bytes(self.bytes_scanned),
+                            elapsed_secs,
+                        )
+                    } else if elapsed_secs < 0.01 {
                         format!(
                             "Scanning\u{2026} {} files \u{00B7} {} \u{00B7} {:.1}s \u{00B7} \u{2014} files/s \u{00B7} \u{2014}/s",
                             self.files_scanned,
@@ -447,6 +498,17 @@ impl eframe::App for RustDirStatApp {
             }
         });
 
+        // --- Duplicates panel (MS12) ---
+        if let Some(ref tree) = self.tree
+            && !self.duplicate_groups.is_empty()
+        {
+            egui::TopBottomPanel::bottom("duplicates_panel")
+                .resizable(true)
+                .show(ctx, |ui| {
+                    duplicates::show(&self.duplicate_groups, tree, &mut self.selected_node, ui);
+                });
+        }
+
         // --- Left panel: directory tree (MS6) ---
         egui::SidePanel::left("tree_panel")
             .default_width(250.0)
@@ -464,10 +526,7 @@ impl eframe::App for RustDirStatApp {
                         );
                     }
                     (Some(_), None) => {
-                        ui.colored_label(
-                            egui::Color32::GRAY,
-                            "Scan in progress\u{2026}",
-                        );
+                        ui.colored_label(egui::Color32::GRAY, "Scan in progress\u{2026}");
                     }
                     _ => {
                         ui.colored_label(egui::Color32::GRAY, "No scan data.");
@@ -497,9 +556,7 @@ impl eframe::App for RustDirStatApp {
 
         // --- Central panel: treemap (MS8) + breadcrumb (MS10) ---
         egui::CentralPanel::default().show(ctx, |ui| {
-            if let (Some(tree), Some(stats)) =
-                (self.tree.as_ref(), self.subtree_stats.as_ref())
-            {
+            if let (Some(tree), Some(stats)) = (self.tree.as_ref(), self.subtree_stats.as_ref()) {
                 // Breadcrumb navigation — only visible when drilled in. (ref: DL-007)
                 if self.treemap_root != tree.root() {
                     ui.horizontal(|ui| {
@@ -556,10 +613,7 @@ impl eframe::App for RustDirStatApp {
                 ui.heading("Treemap");
                 ui.separator();
                 if matches!(self.phase, ScanPhase::Scanning) {
-                    ui.colored_label(
-                        egui::Color32::GRAY,
-                        "Scan in progress\u{2026}",
-                    );
+                    ui.colored_label(egui::Color32::GRAY, "Scan in progress\u{2026}");
                 } else {
                     ui.colored_label(egui::Color32::GRAY, "No scan data.");
                 }
@@ -589,6 +643,9 @@ mod tests {
         assert!(app.treemap_layout.is_none());
         assert!(app.selected_extension.is_none());
         assert_eq!(app.treemap_root, 0);
+        assert!(app.duplicate_groups.is_empty());
+        assert!(app.hash_duplicates_enabled);
+        assert!(!app.detecting_duplicates);
         assert!(app.path_error.is_none());
         assert!(app.scan_path.is_none());
         assert!(app.path_input.is_empty());

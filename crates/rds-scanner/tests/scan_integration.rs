@@ -35,6 +35,7 @@ fn build_tree_from_events(
             }
             ScanEvent::Progress { .. } => {}
             ScanEvent::DuplicateFound { .. } => {}
+            ScanEvent::DuplicateDetectionStarted { .. } => {}
         }
     }
 

@@ -177,11 +177,7 @@ fn render_node(
 
         // Expand/collapse toggle for directories with children.
         if is_dir && has_children {
-            let icon = if is_expanded {
-                "\u{25BC}"
-            } else {
-                "\u{25B6}"
-            };
+            let icon = if is_expanded { "\u{25BC}" } else { "\u{25B6}" };
             if ui.small_button(icon).clicked() {
                 state.toggle(index);
             }
@@ -346,9 +342,9 @@ mod tests {
     #[test]
     fn sorted_children_by_size_descending() {
         let mut tree = DirTree::new("/root");
-        tree.insert(0, make_file("small.txt", 10));   // index 1
-        tree.insert(0, make_file("big.txt", 1000));    // index 2
-        tree.insert(0, make_file("medium.txt", 500));  // index 3
+        tree.insert(0, make_file("small.txt", 10)); // index 1
+        tree.insert(0, make_file("big.txt", 1000)); // index 2
+        tree.insert(0, make_file("medium.txt", 500)); // index 3
 
         let stats = SubtreeStats::compute(&tree);
         let sorted = sorted_children(&tree, 0, &stats);
@@ -358,10 +354,10 @@ mod tests {
     #[test]
     fn sorted_children_dirs_sorted_by_subtree_size() {
         let mut tree = DirTree::new("/root");
-        let small_dir = tree.insert(0, make_dir("small_dir"));  // index 1
-        tree.insert(small_dir, make_file("s.txt", 10));          // index 2
-        let big_dir = tree.insert(0, make_dir("big_dir"));       // index 3
-        tree.insert(big_dir, make_file("b.txt", 1000));          // index 4
+        let small_dir = tree.insert(0, make_dir("small_dir")); // index 1
+        tree.insert(small_dir, make_file("s.txt", 10)); // index 2
+        let big_dir = tree.insert(0, make_dir("big_dir")); // index 3
+        tree.insert(big_dir, make_file("b.txt", 1000)); // index 4
 
         let stats = SubtreeStats::compute(&tree);
         let sorted = sorted_children(&tree, 0, &stats);
@@ -387,10 +383,10 @@ mod tests {
         let mut state = TreeViewState::new();
         expand_ancestors(&tree, &mut state, file);
 
-        assert!(state.is_expanded(0));   // root
-        assert!(state.is_expanded(d1));  // d1
-        assert!(state.is_expanded(d2));  // d2
-        assert!(state.is_expanded(d3));  // d3
+        assert!(state.is_expanded(0)); // root
+        assert!(state.is_expanded(d1)); // d1
+        assert!(state.is_expanded(d2)); // d2
+        assert!(state.is_expanded(d3)); // d3
     }
 
     #[test]
