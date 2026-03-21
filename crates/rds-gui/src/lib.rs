@@ -11,6 +11,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::thread::JoinHandle;
+use std::time::{Duration, Instant};
 
 use crossbeam_channel::Receiver;
 use rds_core::scan::{ScanConfig, ScanEvent, ScanStats};
@@ -53,6 +54,13 @@ pub struct RustDirStatApp {
     path_error: Option<String>,
     /// Running count of ScanError events received during the current scan.
     scan_errors: u64,
+    /// When the current scan began, for elapsed time and rate calculation.
+    scan_start: Option<Instant>,
+    /// When SubtreeStats/ExtensionStats were last recomputed during scan,
+    /// for 500ms throttle enforcement.
+    last_live_recompute: Option<Instant>,
+    /// Tree node count at last recompute, for change detection (ref: DL-009).
+    live_node_count: usize,
     /// Cached per-extension statistics, computed after scan completes. (ref: DL-002)
     extension_stats: Option<Vec<ExtensionStats>>,
     /// Expand/collapse state for directory tree panel.
@@ -81,6 +89,10 @@ impl Default for RustDirStatApp {
 }
 
 impl RustDirStatApp {
+    /// Minimum interval between live recomputes of SubtreeStats/ExtensionStats
+    /// during scan. Caps treemap re-layout at 2x/second. (ref: DL-002)
+    const LIVE_RECOMPUTE_INTERVAL: Duration = Duration::from_millis(500);
+
     /// Creates a new app. If `initial_path` is `Some`, scanning starts
     /// automatically on the first frame.
     pub fn new(initial_path: Option<PathBuf>) -> Self {
@@ -97,6 +109,9 @@ impl RustDirStatApp {
             path_input: String::new(),
             path_error: None,
             scan_errors: 0,
+            scan_start: None,
+            last_live_recompute: None,
+            live_node_count: 0,
             extension_stats: None,
             tree_view_state: tree_view::TreeViewState::new(),
             selected_node: None,
@@ -138,6 +153,9 @@ impl RustDirStatApp {
         self.files_scanned = 0;
         self.bytes_scanned = 0;
         self.scan_errors = 0;
+        self.scan_start = Some(Instant::now());
+        self.last_live_recompute = None;
+        self.live_node_count = 0;
         self.extension_stats = None;
         self.tree_view_state.reset();
         self.selected_node = None;
@@ -171,6 +189,9 @@ impl RustDirStatApp {
     /// on a detached thread avoids GUI stutter from those deallocations.
     fn finish_scan(&mut self, stats: ScanStats) {
         self.phase = ScanPhase::Complete(stats);
+        self.scan_start = None;
+        self.last_live_recompute = None;
+        self.live_node_count = 0;
         if let Some(ref tree) = self.tree {
             self.extension_stats = Some(rds_core::stats::compute_extension_stats(tree));
         }
@@ -185,6 +206,7 @@ impl RustDirStatApp {
             self.subtree_stats = Some(tree_view::SubtreeStats::compute(tree));
             self.tree_view_state.expand(tree.root());
         }
+        self.treemap_layout = None;
     }
 
     /// Drains up to 100 ScanEvent values from the channel per frame.
@@ -246,6 +268,48 @@ impl RustDirStatApp {
             }
         }
     }
+
+    /// Periodically recomputes SubtreeStats and ExtensionStats from the
+    /// partially-built tree so panels can render live data during scan.
+    /// Throttled to at most once per 500ms, skipped when no new nodes
+    /// have arrived since the last recompute. (ref: DL-001, DL-002, DL-009)
+    fn maybe_live_recompute(&mut self) {
+        if !matches!(self.phase, ScanPhase::Scanning) {
+            return;
+        }
+
+        let tree = match self.tree.as_ref() {
+            Some(t) => t,
+            None => return,
+        };
+
+        let current_count = tree.len();
+        if current_count == self.live_node_count {
+            return;
+        }
+
+        let now = Instant::now();
+        let enough_elapsed = match self.last_live_recompute {
+            None => {
+                // First recompute: wait at least 500ms from scan start. (ref: DL-007)
+                match self.scan_start {
+                    Some(start) => now.duration_since(start) >= Self::LIVE_RECOMPUTE_INTERVAL,
+                    None => false,
+                }
+            }
+            Some(last) => now.duration_since(last) >= Self::LIVE_RECOMPUTE_INTERVAL,
+        };
+        if !enough_elapsed {
+            return;
+        }
+
+        self.subtree_stats = Some(tree_view::SubtreeStats::compute(tree));
+        self.extension_stats = Some(rds_core::stats::compute_extension_stats(tree));
+        self.treemap_layout = None;
+        self.tree_view_state.expand(tree.root());
+        self.last_live_recompute = Some(now);
+        self.live_node_count = current_count;
+    }
 }
 
 /// Formats a byte count as a human-readable string (B/KB/MB/GB/TB).
@@ -278,6 +342,7 @@ impl eframe::App for RustDirStatApp {
         // Drain scanner events and keep repainting while scanning.
         if matches!(self.phase, ScanPhase::Scanning) {
             self.drain_events();
+            self.maybe_live_recompute();
             ctx.request_repaint();
         }
 
@@ -332,18 +397,39 @@ impl eframe::App for RustDirStatApp {
                     ui.label("Ready \u{2014} open a folder to begin scanning.");
                 }
                 ScanPhase::Scanning => {
-                    ui.horizontal(|ui| {
-                        ui.spinner();
-                        let mut text = format!(
-                            "Scanning\u{2026} {} files, {}",
+                    let elapsed_secs = self
+                        .scan_start
+                        .map(|t| t.elapsed().as_secs_f64())
+                        .unwrap_or(0.0);
+
+                    let mut text = if elapsed_secs < 0.01 {
+                        format!(
+                            "Scanning\u{2026} {} files \u{00B7} {} \u{00B7} {:.1}s \u{00B7} \u{2014} files/s \u{00B7} \u{2014}/s",
                             self.files_scanned,
                             format_bytes(self.bytes_scanned),
-                        );
-                        if self.scan_errors > 0 {
-                            text.push_str(&format!(" ({} errors)", self.scan_errors));
-                        }
-                        ui.label(text);
-                    });
+                            elapsed_secs,
+                        )
+                    } else {
+                        let files_per_sec = self.files_scanned as f64 / elapsed_secs;
+                        let bytes_per_sec = self.bytes_scanned as f64 / elapsed_secs;
+                        format!(
+                            "Scanning\u{2026} {} files \u{00B7} {} \u{00B7} {:.1}s \u{00B7} {:.0} files/s \u{00B7} {}/s",
+                            self.files_scanned,
+                            format_bytes(self.bytes_scanned),
+                            elapsed_secs,
+                            files_per_sec,
+                            format_bytes(bytes_per_sec as u64),
+                        )
+                    };
+                    if self.scan_errors > 0 {
+                        text.push_str(&format!(" ({} errors)", self.scan_errors));
+                    }
+
+                    let fraction = (elapsed_secs * 0.3 % 1.0) as f32;
+                    let bar = egui::ProgressBar::new(fraction)
+                        .animate(true)
+                        .text(text);
+                    ui.add(bar);
                 }
                 ScanPhase::Complete(stats) => {
                     let mut text = format!(
@@ -507,6 +593,9 @@ mod tests {
         assert!(app.scan_path.is_none());
         assert!(app.path_input.is_empty());
         assert!(app.initial_path.is_none());
+        assert!(app.scan_start.is_none());
+        assert!(app.last_live_recompute.is_none());
+        assert_eq!(app.live_node_count, 0);
     }
 
     #[test]
