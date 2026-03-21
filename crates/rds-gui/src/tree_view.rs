@@ -456,9 +456,17 @@ mod tests {
 
         let stats = SubtreeStats::compute(&tree);
         assert_eq!(stats.size(0), 250, "root size should exclude deleted file");
-        assert_eq!(stats.file_count(0), 2, "root file count should exclude deleted file");
+        assert_eq!(
+            stats.file_count(0),
+            2,
+            "root file count should exclude deleted file"
+        );
         assert_eq!(stats.size(sub), 200, "sub size should exclude deleted file");
-        assert_eq!(stats.file_count(sub), 1, "sub file count should exclude deleted file");
+        assert_eq!(
+            stats.file_count(sub),
+            1,
+            "sub file count should exclude deleted file"
+        );
     }
 
     #[test]
@@ -476,7 +484,11 @@ mod tests {
         assert_eq!(stats.size(0), 50, "root size should only include c.txt");
         assert_eq!(stats.file_count(0), 1, "root should count only c.txt");
         assert_eq!(stats.size(sub), 0, "deleted sub should have zero size");
-        assert_eq!(stats.file_count(sub), 0, "deleted sub should have zero file count");
+        assert_eq!(
+            stats.file_count(sub),
+            0,
+            "deleted sub should have zero file count"
+        );
     }
 
     #[test]

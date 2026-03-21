@@ -19,6 +19,7 @@ use rds_core::scan::{ScanConfig, ScanEvent, ScanStats};
 use rds_core::stats::ExtensionStats;
 use rds_core::tree::DirTree;
 
+mod actions;
 mod duplicates;
 mod ext_stats;
 mod tree_view;
@@ -38,6 +39,16 @@ enum ScanPhase {
 pub(crate) struct DuplicateGroup {
     pub(crate) node_indices: Vec<usize>,
     pub(crate) wasted_bytes: u64,
+}
+
+/// Pending delete confirmation state. Populated when the user initiates a
+/// delete action; consumed by `confirm_delete` when the user confirms.
+#[allow(dead_code)] // Used by upcoming MS13 context menu and confirmation dialog tasks.
+pub(crate) struct PendingDelete {
+    pub(crate) node_index: usize,
+    pub(crate) path_display: String,
+    pub(crate) size_bytes: u64,
+    pub(crate) is_dir: bool,
 }
 
 /// Main application state. Holds the scan lifecycle, DirTree arena being
@@ -93,6 +104,14 @@ pub struct RustDirStatApp {
     hash_duplicates_enabled: bool,
     /// True while the scanner is running the duplicate detection pipeline.
     detecting_duplicates: bool,
+    /// Pending delete confirmation. Set when user initiates delete, consumed
+    /// by `confirm_delete` when user confirms in the dialog.
+    pending_delete: Option<PendingDelete>,
+    /// Cumulative bytes freed by trash-delete actions in the current scan session.
+    /// Reset to 0 when a new scan starts.
+    freed_bytes: u64,
+    /// Error message from the most recent failed delete attempt.
+    delete_error: Option<String>,
 }
 
 impl Default for RustDirStatApp {
@@ -137,6 +156,9 @@ impl RustDirStatApp {
             duplicate_groups: Vec::new(),
             hash_duplicates_enabled: true,
             detecting_duplicates: false,
+            pending_delete: None,
+            freed_bytes: 0,
+            delete_error: None,
         }
     }
 
@@ -183,6 +205,9 @@ impl RustDirStatApp {
         self.treemap_root = 0;
         self.duplicate_groups = Vec::new();
         self.detecting_duplicates = false;
+        self.pending_delete = None;
+        self.freed_bytes = 0;
+        self.delete_error = None;
         self.path_error = None;
         self.phase = ScanPhase::Scanning;
         self.scan_path = Some(path.clone());
@@ -348,6 +373,55 @@ impl RustDirStatApp {
         self.tree_view_state.expand(tree.root());
         self.last_live_recompute = Some(now);
         self.live_node_count = current_count;
+    }
+
+    /// Executes a pending delete: sends the entry to the OS trash, tombstones
+    /// the arena node, invalidates cached stats and layout, and cleans up
+    /// duplicate groups. Called when the user confirms in the delete dialog.
+    #[allow(dead_code)] // Called by upcoming MS13 confirmation dialog task.
+    fn confirm_delete(&mut self) {
+        let pending = match self.pending_delete.take() {
+            Some(p) => p,
+            None => return,
+        };
+
+        let tree = match self.tree.as_mut() {
+            Some(t) => t,
+            None => return,
+        };
+
+        match actions::execute_delete(tree, pending.node_index) {
+            Ok(freed) => {
+                self.freed_bytes += freed;
+
+                // Invalidate cached stats and layout so they are recomputed.
+                self.subtree_stats = None;
+                self.extension_stats = None;
+                self.treemap_layout = None;
+
+                // Clear selection if it pointed at the deleted node.
+                if self.selected_node == Some(pending.node_index) {
+                    self.selected_node = None;
+                }
+
+                // Reset treemap root if it pointed at the deleted node.
+                if let Some(ref tree) = self.tree
+                    && self.treemap_root == pending.node_index
+                {
+                    self.treemap_root = tree.root();
+                }
+
+                actions::cleanup_duplicate_groups(
+                    &mut self.duplicate_groups,
+                    self.tree.as_ref().unwrap(),
+                );
+
+                self.delete_error = None;
+            }
+            Err(msg) => {
+                self.delete_error = Some(msg);
+            }
+        }
     }
 }
 
@@ -646,6 +720,9 @@ mod tests {
         assert!(app.duplicate_groups.is_empty());
         assert!(app.hash_duplicates_enabled);
         assert!(!app.detecting_duplicates);
+        assert!(app.pending_delete.is_none());
+        assert_eq!(app.freed_bytes, 0);
+        assert!(app.delete_error.is_none());
         assert!(app.path_error.is_none());
         assert!(app.scan_path.is_none());
         assert!(app.path_input.is_empty());
