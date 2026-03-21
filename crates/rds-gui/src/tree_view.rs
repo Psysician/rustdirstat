@@ -241,8 +241,10 @@ fn render_node(
         }
 
         // Right-click context menu (only when scan is complete).
+        // Re-interact to ensure secondary click detection works inside
+        // ScrollArea (whose drag sensing can shadow click responses).
         if scan_complete {
-            response.context_menu(|ui| {
+            response.interact(egui::Sense::click()).context_menu(|ui| {
                 if ui.button("Open in File Manager").clicked() {
                     let _ = crate::actions::open_in_file_manager(tree, index);
                     ui.close();

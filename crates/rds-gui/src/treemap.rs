@@ -460,6 +460,9 @@ pub(crate) fn show(
         *selected = hovered_index;
     }
 
+    // Re-interact to ensure secondary click detection works reliably.
+    let response = response.interact(egui::Sense::click());
+
     // Right-click to select node for context menu.
     if response.secondary_clicked() {
         *selected = hovered_index;

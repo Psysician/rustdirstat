@@ -52,7 +52,7 @@ pub(crate) fn show(
                             *selected_node = Some(idx);
                         }
                         if scan_complete {
-                            response.context_menu(|ui| {
+                            response.interact(egui::Sense::click()).context_menu(|ui| {
                                 if ui.button("Open in File Manager").clicked() {
                                     let _ = crate::actions::open_in_file_manager(tree, idx);
                                     ui.close();
