@@ -1,8 +1,9 @@
-//! Delete and cleanup actions for the GUI.
+//! File actions for the GUI (delete, open in file manager).
 //!
 //! `execute_delete` sends a file/directory to the OS trash and tombstones the
 //! arena node. `cleanup_duplicate_groups` prunes stale entries from duplicate
-//! groups after deletions.
+//! groups after deletions. `open_in_file_manager` reveals a file or directory
+//! in the platform's native file manager.
 
 use rds_core::tree::DirTree;
 
@@ -55,10 +56,10 @@ pub(crate) fn cleanup_duplicate_groups(groups: &mut Vec<DuplicateGroup>, tree: &
 /// directory.
 #[allow(dead_code)] // Wired up in tasks 3-5 (tree view, treemap, duplicates context menus)
 pub(crate) fn open_in_file_manager(tree: &DirTree, index: usize) -> Result<(), String> {
-    let path = tree.path(index);
     let node = tree
         .get(index)
         .ok_or_else(|| format!("node at index {index} not found"))?;
+    let path = tree.path(index);
 
     let result = if node.is_dir {
         open::that_detached(&path).map_err(|e| e.to_string())
