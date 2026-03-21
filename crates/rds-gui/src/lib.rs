@@ -19,6 +19,7 @@ use rds_core::tree::DirTree;
 
 mod ext_stats;
 mod tree_view;
+mod treemap;
 
 /// Scan lifecycle phases. (ref: DL-004)
 enum ScanPhase {
