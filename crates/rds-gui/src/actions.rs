@@ -78,8 +78,12 @@ pub(crate) fn open_in_file_manager(tree: &DirTree, index: usize) -> Result<(), S
 fn open_file_revealing(path: &std::path::Path) -> Result<(), String> {
     #[cfg(target_os = "windows")]
     {
+        // `raw_arg` bypasses Rust's automatic quoting so explorer sees the
+        // `/select,"<path>"` token exactly as intended, even when the path
+        // contains spaces, commas, or cmd metacharacters like `&` or `%`.
+        use std::os::windows::process::CommandExt;
         std::process::Command::new("explorer")
-            .arg(format!("/select,{}", path.display()))
+            .raw_arg(format!("/select,\"{}\"", path.display()))
             .spawn()
             .map_err(|e| e.to_string())?;
         Ok(())
