@@ -14,7 +14,6 @@ const MIN_RECT_DIM: f32 = 1.0;
 
 /// Minimum rectangle dimension for cushion shading. Rects smaller
 /// than this in either dimension get flat fills. (ref: DL-005)
-#[allow(dead_code)] // Used in show() (Task 4)
 const MIN_CUSHION_DIM: f32 = 4.0;
 
 /// Initial ridge height at depth 0. Produces visible gradients even
@@ -26,16 +25,12 @@ const INITIAL_HEIGHT: f32 = 40.0;
 const HEIGHT_FACTOR: f32 = 0.5;
 
 /// Ambient intensity floor. Prevents fully black edges. (ref: DL-007)
-#[allow(dead_code)] // Wired in show() Task 4
 const AMBIENT: f32 = 0.3;
 
 /// Pre-normalized light direction toward upper-left.
 /// L = normalize(-0.5, -0.5, 1.0). (ref: DL-003)
-#[allow(dead_code)] // Wired in show() Task 4
 const LIGHT_X: f32 = -0.408_248_3;
-#[allow(dead_code)] // Wired in show() Task 4
 const LIGHT_Y: f32 = -0.408_248_3;
-#[allow(dead_code)] // Wired in show() Task 4
 const LIGHT_Z: f32 = 0.816_496_6;
 
 /// Accumulated parabolic ridge coefficients for cushion shading.
@@ -65,7 +60,6 @@ impl CushionCoeffs {
         }
     }
 
-    #[allow(dead_code)] // Wired in show() Task 4
     fn intensity(&self, x: f32, y: f32) -> f32 {
         let dhdx = 2.0 * self.a2x * x + self.a1x;
         let dhdy = 2.0 * self.a2y * y + self.a1y;
@@ -77,7 +71,6 @@ impl CushionCoeffs {
     }
 }
 
-#[allow(dead_code)] // Wired in show() Task 4
 fn shade_color(base: egui::Color32, intensity: f32) -> egui::Color32 {
     let [r, g, b, a] = base.to_array();
     egui::Color32::from_rgba_premultiplied(
@@ -88,7 +81,6 @@ fn shade_color(base: egui::Color32, intensity: f32) -> egui::Color32 {
     )
 }
 
-#[allow(dead_code)] // Wired in show() Task 4
 fn grid_subdivisions(width: f32, height: f32) -> u32 {
     let min_dim = width.min(height);
     if min_dim < 20.0 {
@@ -105,7 +97,6 @@ fn grid_subdivisions(width: f32, height: f32) -> u32 {
 /// `rel_rect` is in relative layout coordinates (already shrunk by 0.5 for gap).
 /// `offset` translates to screen-space for vertex positions.
 /// Intensity is computed from `cushion` at relative coordinates. (ref: DL-002, DL-006)
-#[allow(dead_code)] // Wired in show() Task 4
 fn build_cushion_mesh(
     mesh: &mut egui::Mesh,
     rel_rect: egui::Rect,
@@ -164,10 +155,9 @@ pub(crate) struct TreemapRect {
     /// Fill color derived from file extension.
     pub color: egui::Color32,
     /// Nesting depth (0 = direct child of root).
-    #[allow(dead_code)] // Read in Task 3/4 for cushion shading
+    #[allow(dead_code)] // Read in tests; will be used for drill-down (MS10)
     pub depth: u32,
     /// Accumulated cushion surface coefficients for shading.
-    #[allow(dead_code)] // Read in Task 3/4 for cushion shading
     pub cushion: CushionCoeffs,
 }
 
@@ -285,10 +275,12 @@ fn compute_recursive(
     }
 }
 
-/// Renders the cached treemap layout with hover tooltips and click-to-select.
+/// Renders the cached treemap layout with cushion shading, hover tooltips,
+/// and click-to-select.
 ///
-/// `layout` coordinates are relative to (0,0); this function offsets them
-/// by the panel's allocated position. (ref: DL-002, DL-007, DL-008, DL-009)
+/// Large rectangles (>= MIN_CUSHION_DIM) get cushion-shaded mesh rendering.
+/// Small rectangles get flat fills. Both use the 0.5px inset for visual
+/// separation. (ref: DL-002, DL-005, DL-006, DL-007, DL-008, DL-009)
 pub(crate) fn show(
     layout: &TreemapLayout,
     tree: &DirTree,
@@ -301,14 +293,35 @@ pub(crate) fn show(
     );
     let offset = response.rect.min.to_vec2();
 
-    // Draw all rectangles. (ref: DL-007)
+    // Build a single shared mesh for all cushion-shaded rects. (ref: DL-006)
+    let mut cushion_mesh = egui::Mesh::default();
+
     for rect_info in &layout.rects {
-        let abs_rect = rect_info.rect.translate(offset);
-        // Inset by 0.5px for visual separation between adjacent rectangles.
-        painter.rect_filled(abs_rect.shrink(0.5), 0.0, rect_info.color);
+        let w = rect_info.rect.width();
+        let h = rect_info.rect.height();
+
+        if w >= MIN_CUSHION_DIM && h >= MIN_CUSHION_DIM {
+            // Cushion shading via mesh. (ref: DL-002, DL-005)
+            build_cushion_mesh(
+                &mut cushion_mesh,
+                rect_info.rect.shrink(0.5),
+                offset,
+                &rect_info.cushion,
+                rect_info.color,
+            );
+        } else {
+            // Flat fill for tiny rects. (ref: DL-005)
+            let abs_rect = rect_info.rect.translate(offset);
+            painter.rect_filled(abs_rect.shrink(0.5), 0.0, rect_info.color);
+        }
     }
 
-    // Highlight selected node with a white border. (ref: DL-008)
+    // Add the combined cushion mesh as a single shape. (ref: DL-006)
+    if !cushion_mesh.vertices.is_empty() {
+        painter.add(egui::Shape::Mesh(cushion_mesh.into()));
+    }
+
+    // Highlight selected node with a white border. (ref: MS8 DL-008)
     if let Some(sel_idx) = *selected
         && let Some(hit) = layout.rects.iter().find(|r| r.node_index == sel_idx)
     {
@@ -331,12 +344,12 @@ pub(crate) fn show(
             .map(|r| r.node_index)
     });
 
-    // Hover tooltip: full path + human-readable size. (ref: DL-009)
-    #[allow(deprecated)]
+    // Hover tooltip: full path + human-readable size. (ref: MS8 DL-009)
     if let Some(idx) = hovered_index
         && let Some(node) = tree.get(idx)
     {
         let path = tree.path(idx);
+        #[allow(deprecated)]
         egui::show_tooltip_at_pointer(
             ui.ctx(),
             ui.layer_id(),
