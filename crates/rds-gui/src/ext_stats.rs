@@ -44,7 +44,11 @@ pub(crate) fn hsl_to_color32(hsl: &HslColor) -> egui::Color32 {
 ///
 /// `ext_stats` must be pre-sorted by `total_bytes` descending (as returned
 /// by `compute_extension_stats`). (ref: DL-004, DL-006)
-pub(crate) fn show(ext_stats: &[ExtensionStats], ui: &mut egui::Ui) {
+pub(crate) fn show(
+    ext_stats: &[ExtensionStats],
+    selected_extension: &mut Option<String>,
+    ui: &mut egui::Ui,
+) {
     // --- Stacked horizontal bar chart (ref: DL-008) ---
     let available_width = ui.available_width();
     let bar_height = 20.0;
@@ -83,8 +87,16 @@ pub(crate) fn show(ext_stats: &[ExtensionStats], ui: &mut egui::Ui) {
             stat.percentage,
         );
         let segment_response =
-            ui.allocate_rect(segment, egui::Sense::hover());
-        segment_response.on_hover_text(hover_text);
+            ui.allocate_rect(segment, egui::Sense::click());
+        let segment_response = segment_response.on_hover_text(&hover_text);
+        if segment_response.clicked() {
+            let ext = stat.extension.clone();
+            if *selected_extension == Some(ext.clone()) {
+                *selected_extension = None; // toggle off
+            } else {
+                *selected_extension = Some(ext);
+            }
+        }
 
         x += w;
     }
@@ -125,7 +137,15 @@ pub(crate) fn show(ext_stats: &[ExtensionStats], ui: &mut egui::Ui) {
                     } else {
                         &stat.extension
                     };
-                    ui.label(display_name);
+                    let is_ext_selected =
+                        selected_extension.as_deref() == Some(stat.extension.as_str());
+                    if ui.selectable_label(is_ext_selected, display_name).clicked() {
+                        if is_ext_selected {
+                            *selected_extension = None;
+                        } else {
+                            *selected_extension = Some(stat.extension.clone());
+                        }
+                    }
 
                     // File count.
                     ui.label(stat.count.to_string());

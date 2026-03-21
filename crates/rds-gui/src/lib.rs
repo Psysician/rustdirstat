@@ -397,7 +397,7 @@ impl eframe::App for RustDirStatApp {
                 ui.separator();
                 match &self.extension_stats {
                     Some(stats) => {
-                        ext_stats::show(stats, ui);
+                        ext_stats::show(stats, &mut self.selected_extension, ui);
                     }
                     None => {
                         if self.tree.is_some() {
