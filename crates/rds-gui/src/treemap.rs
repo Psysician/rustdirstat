@@ -174,7 +174,6 @@ pub(crate) struct TreemapLayout {
     pub last_size: egui::Vec2,
     /// Root node used for this layout computation. Used for cache invalidation
     /// when treemap_root changes via drill-down. (ref: DL-009)
-    #[allow(dead_code)] // Read in tests; will be used for drill-down wiring (MS10 Task 6)
     pub last_root: usize,
 }
 
@@ -291,7 +290,6 @@ fn compute_recursive(
 /// of `current_root` that is an ancestor of the file. Returns `Some(dir_index)`
 /// if that child is a directory (drill target), or `None` if the file is a
 /// direct child of the current root (nothing deeper to drill into). (ref: DL-005)
-#[allow(dead_code)] // Used in tests; will be called from double-click handler (MS10 Task 6)
 pub(crate) fn find_drill_target(
     tree: &DirTree,
     file_idx: usize,
@@ -316,7 +314,6 @@ pub(crate) fn find_drill_target(
 ///
 /// Returns a list of `(node_index, node_name)` pairs ordered from root to
 /// `treemap_root`. Used for rendering the breadcrumb navigation bar. (ref: DL-007)
-#[allow(dead_code)] // Used in tests; will be called from breadcrumb UI (MS10 Task 6)
 pub(crate) fn breadcrumb_chain(tree: &DirTree, treemap_root: usize) -> Vec<(usize, String)> {
     let mut chain = Vec::new();
     let mut current = treemap_root;
@@ -342,6 +339,7 @@ pub(crate) fn show(
     tree: &DirTree,
     selected: &mut Option<usize>,
     highlighted_extension: &Option<String>,
+    treemap_root: &mut usize,
     ui: &mut egui::Ui,
 ) {
     let (response, painter) = ui.allocate_painter(
@@ -445,6 +443,14 @@ pub(crate) fn show(
     // Click to select node.
     if response.clicked() {
         *selected = hovered_index;
+    }
+
+    // Double-click to drill into subdirectory. (ref: DL-005)
+    if response.double_clicked()
+        && let Some(idx) = hovered_index
+        && let Some(target) = find_drill_target(tree, idx, *treemap_root)
+    {
+        *treemap_root = target;
     }
 }
 
