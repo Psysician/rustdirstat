@@ -587,11 +587,13 @@ mod tests {
 
         let stats_after = SubtreeStats::compute(&tree);
         assert_eq!(
-            stats_after.size(0), 800,
+            stats_after.size(0),
+            800,
             "root size should decrease by tombstoned subtree (300)"
         );
         assert_eq!(
-            stats_after.file_count(0), 4,
+            stats_after.file_count(0),
+            4,
             "root file count should decrease by tombstoned files (2)"
         );
         // dir_b and top.txt remain unchanged.
@@ -630,11 +632,13 @@ mod tests {
 
         let stats_after = SubtreeStats::compute(&tree);
         assert_eq!(
-            stats_after.size(parent_dir), 0,
+            stats_after.size(parent_dir),
+            0,
             "directory with all children tombstoned should show 0 size"
         );
         assert_eq!(
-            stats_after.file_count(parent_dir), 0,
+            stats_after.file_count(parent_dir),
+            0,
             "directory with all children tombstoned should show 0 file count"
         );
         // parent_dir itself is not deleted — it just has no live children.

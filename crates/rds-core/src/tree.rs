@@ -521,9 +521,18 @@ mod tests {
 
         // Iterating parent's children must not include the tombstoned index.
         let children: Vec<usize> = tree.children(0).to_vec();
-        assert!(!children.contains(&file_b), "tombstoned index should not appear in parent's children");
-        assert!(children.contains(&file_a), "non-tombstoned sibling a should remain");
-        assert!(children.contains(&file_c), "non-tombstoned sibling c should remain");
+        assert!(
+            !children.contains(&file_b),
+            "tombstoned index should not appear in parent's children"
+        );
+        assert!(
+            children.contains(&file_a),
+            "non-tombstoned sibling a should remain"
+        );
+        assert!(
+            children.contains(&file_c),
+            "non-tombstoned sibling c should remain"
+        );
         assert_eq!(children.len(), 2);
     }
 }

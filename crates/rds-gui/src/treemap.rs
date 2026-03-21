@@ -467,9 +467,7 @@ pub(crate) fn show(
 
     // Context menu for selected node (only when scan is complete and not root).
     // Guard attachment so right-clicking empty space doesn't show an empty popup.
-    if scan_complete
-        && selected.is_some_and(|idx| idx != tree.root())
-    {
+    if scan_complete && selected.is_some_and(|idx| idx != tree.root()) {
         response.context_menu(|ui| {
             if let Some(sel_idx) = *selected
                 && ui.button("Delete").clicked()
