@@ -428,7 +428,13 @@ impl eframe::App for RustDirStatApp {
                 }
 
                 if let Some(layout) = self.treemap_layout.as_ref() {
-                    treemap::show(layout, tree, &mut self.selected_node, ui);
+                    treemap::show(
+                        layout,
+                        tree,
+                        &mut self.selected_node,
+                        &self.selected_extension,
+                        ui,
+                    );
                 }
             } else {
                 ui.heading("Treemap");

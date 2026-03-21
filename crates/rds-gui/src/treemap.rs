@@ -285,6 +285,7 @@ pub(crate) fn show(
     layout: &TreemapLayout,
     tree: &DirTree,
     selected: &mut Option<usize>,
+    highlighted_extension: &Option<String>,
     ui: &mut egui::Ui,
 ) {
     let (response, painter) = ui.allocate_painter(
@@ -293,10 +294,34 @@ pub(crate) fn show(
     );
     let offset = response.rect.min.to_vec2();
 
+    // Helper: dim a color to 30% brightness when extension filter is active
+    // and the node doesn't match. (ref: DL-002)
+    let effective_color = |rect_info: &TreemapRect| -> egui::Color32 {
+        if let Some(ext) = highlighted_extension {
+            let matches = tree
+                .get(rect_info.node_index)
+                .is_some_and(|n| n.extension.as_deref().unwrap_or("") == ext.as_str());
+            if matches {
+                rect_info.color
+            } else {
+                let [r, g, b, a] = rect_info.color.to_array();
+                egui::Color32::from_rgba_premultiplied(
+                    (r as f32 * 0.3) as u8,
+                    (g as f32 * 0.3) as u8,
+                    (b as f32 * 0.3) as u8,
+                    a,
+                )
+            }
+        } else {
+            rect_info.color
+        }
+    };
+
     // Build a single shared mesh for all cushion-shaded rects. (ref: DL-006)
     let mut cushion_mesh = egui::Mesh::default();
 
     for rect_info in &layout.rects {
+        let color = effective_color(rect_info);
         let w = rect_info.rect.width();
         let h = rect_info.rect.height();
 
@@ -307,12 +332,12 @@ pub(crate) fn show(
                 rect_info.rect.shrink(0.5),
                 offset,
                 &rect_info.cushion,
-                rect_info.color,
+                color,
             );
         } else {
             // Flat fill for tiny rects. (ref: DL-005)
             let abs_rect = rect_info.rect.translate(offset);
-            painter.rect_filled(abs_rect.shrink(0.5), 0.0, rect_info.color);
+            painter.rect_filled(abs_rect.shrink(0.5), 0.0, color);
         }
     }
 
