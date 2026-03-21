@@ -53,6 +53,11 @@ pub(crate) fn show(
                         }
                         if scan_complete {
                             response.context_menu(|ui| {
+                                if ui.button("Open in File Manager").clicked() {
+                                    let _ = crate::actions::open_in_file_manager(tree, idx);
+                                    ui.close();
+                                }
+                                ui.separator();
                                 if ui.button("Delete").clicked() {
                                     let size = tree.get(idx).map(|n| n.size).unwrap_or(0);
                                     *pending_delete = Some(PendingDelete {
