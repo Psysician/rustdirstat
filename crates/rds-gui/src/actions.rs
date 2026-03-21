@@ -54,7 +54,6 @@ pub(crate) fn cleanup_duplicate_groups(groups: &mut Vec<DuplicateGroup>, tree: &
 /// For directories, opens the directory directly. For files, uses
 /// platform-specific commands to reveal (select) the file in its parent
 /// directory.
-#[allow(dead_code)] // Wired up in tasks 3-5 (tree view, treemap, duplicates context menus)
 pub(crate) fn open_in_file_manager(tree: &DirTree, index: usize) -> Result<(), String> {
     let node = tree
         .get(index)
@@ -76,7 +75,6 @@ pub(crate) fn open_in_file_manager(tree: &DirTree, index: usize) -> Result<(), S
 }
 
 /// Platform-specific file reveal: selects the file in the native file manager.
-#[allow(dead_code)] // Called by open_in_file_manager
 fn open_file_revealing(path: &std::path::Path) -> Result<(), String> {
     #[cfg(target_os = "windows")]
     {
