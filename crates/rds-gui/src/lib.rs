@@ -392,9 +392,12 @@ impl RustDirStatApp {
             Ok(freed) => {
                 self.freed_bytes += freed;
 
-                // Invalidate cached stats and layout so they are recomputed.
-                self.subtree_stats = None;
-                self.extension_stats = None;
+                // Recompute cached stats immediately. There is no lazy-recompute
+                // path in ScanPhase::Complete — panels check for Some and show
+                // fallback text when None.
+                let tree_ref = self.tree.as_ref().unwrap();
+                self.subtree_stats = Some(tree_view::SubtreeStats::compute(tree_ref));
+                self.extension_stats = Some(rds_core::stats::compute_extension_stats(tree_ref));
                 self.treemap_layout = None;
 
                 // Clear selection if it pointed at a now-deleted node (the target
