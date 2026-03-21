@@ -28,8 +28,11 @@ impl SubtreeStats {
         let mut file_counts = vec![0u64; len];
 
         // Initialize with each node's own values.
+        // Deleted (tombstoned) nodes contribute nothing.
         for i in 0..len {
-            if let Some(node) = tree.get(i) {
+            if let Some(node) = tree.get(i)
+                && !node.deleted
+            {
                 sizes[i] = node.size;
                 if !node.is_dir {
                     file_counts[i] = 1;
@@ -41,8 +44,10 @@ impl SubtreeStats {
         // (depth-first insertion), so reverse iteration visits children
         // before parents — each child's accumulated total is final when
         // added to its parent.
+        // Deleted nodes are skipped so their values never propagate upward.
         for i in (1..len).rev() {
             if let Some(node) = tree.get(i)
+                && !node.deleted
                 && let Some(parent) = node.parent
             {
                 sizes[parent] += sizes[i];
@@ -104,7 +109,12 @@ impl TreeViewState {
 
 /// Returns child indices of `index` sorted by subtree size descending.
 pub(crate) fn sorted_children(tree: &DirTree, index: usize, stats: &SubtreeStats) -> Vec<usize> {
-    let mut children: Vec<usize> = tree.children(index).to_vec();
+    let mut children: Vec<usize> = tree
+        .children(index)
+        .iter()
+        .copied()
+        .filter(|&c| tree.get(c).is_some_and(|n| !n.deleted))
+        .collect();
     children.sort_by(|&a, &b| stats.size(b).cmp(&stats.size(a)));
     children
 }
@@ -424,5 +434,64 @@ mod tests {
 
         assert!(state.is_expanded(0));
         assert!(state.is_expanded(d1));
+    }
+
+    #[test]
+    fn subtree_stats_excludes_deleted_file() {
+        let mut tree = DirTree::new("/root");
+        let sub = tree.insert(0, make_dir("sub"));
+        let a = tree.insert(sub, make_file("a.txt", 100));
+        tree.insert(sub, make_file("b.txt", 200));
+        tree.insert(0, make_file("c.txt", 50));
+
+        // Before tombstone: root = 350 bytes, 3 files; sub = 300 bytes, 2 files.
+        let stats = SubtreeStats::compute(&tree);
+        assert_eq!(stats.size(0), 350);
+        assert_eq!(stats.file_count(0), 3);
+        assert_eq!(stats.size(sub), 300);
+        assert_eq!(stats.file_count(sub), 2);
+
+        // Tombstone a.txt (100 bytes).
+        tree.tombstone(a);
+
+        let stats = SubtreeStats::compute(&tree);
+        assert_eq!(stats.size(0), 250, "root size should exclude deleted file");
+        assert_eq!(stats.file_count(0), 2, "root file count should exclude deleted file");
+        assert_eq!(stats.size(sub), 200, "sub size should exclude deleted file");
+        assert_eq!(stats.file_count(sub), 1, "sub file count should exclude deleted file");
+    }
+
+    #[test]
+    fn subtree_stats_excludes_deleted_directory() {
+        let mut tree = DirTree::new("/root");
+        let sub = tree.insert(0, make_dir("sub"));
+        tree.insert(sub, make_file("a.txt", 100));
+        tree.insert(sub, make_file("b.txt", 200));
+        tree.insert(0, make_file("c.txt", 50));
+
+        // Tombstone entire subdirectory (sub + a.txt + b.txt).
+        tree.tombstone(sub);
+
+        let stats = SubtreeStats::compute(&tree);
+        assert_eq!(stats.size(0), 50, "root size should only include c.txt");
+        assert_eq!(stats.file_count(0), 1, "root should count only c.txt");
+        assert_eq!(stats.size(sub), 0, "deleted sub should have zero size");
+        assert_eq!(stats.file_count(sub), 0, "deleted sub should have zero file count");
+    }
+
+    #[test]
+    fn sorted_children_excludes_deleted() {
+        let mut tree = DirTree::new("/root");
+        let small = tree.insert(0, make_file("small.txt", 10));
+        tree.insert(0, make_file("big.txt", 1000));
+        tree.insert(0, make_file("medium.txt", 500));
+
+        // Tombstone the small file.
+        tree.tombstone(small);
+
+        let stats = SubtreeStats::compute(&tree);
+        let sorted = sorted_children(&tree, 0, &stats);
+        // small.txt (index 1) should be excluded.
+        assert_eq!(sorted, vec![2, 3]);
     }
 }
