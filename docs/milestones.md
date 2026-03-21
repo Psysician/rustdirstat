@@ -64,7 +64,7 @@ Implement `ExtStatsPanel`. Compute `ExtensionStats` from `DirTree`. Assign deter
 
 ---
 
-## MS8 — Treemap Layout (Flat)
+## ~~MS8 — Treemap Layout (Flat)~~ DONE
 
 Implement `TreemapRenderer` with flat colored rectangles (no cushion shading yet). Use `streemap::Squarified` for layout. Render via `Painter::rect_filled()`. Colors from `ExtensionStats`. Click to select, hover tooltip (path, size). Cache layout, recompute on resize.
 
