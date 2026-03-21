@@ -43,7 +43,6 @@ pub(crate) struct DuplicateGroup {
 
 /// Pending delete confirmation state. Populated when the user initiates a
 /// delete action; consumed by `confirm_delete` when the user confirms.
-#[allow(dead_code)] // Used by upcoming MS13 context menu and confirmation dialog tasks.
 pub(crate) struct PendingDelete {
     pub(crate) node_index: usize,
     pub(crate) path_display: String,
@@ -378,7 +377,6 @@ impl RustDirStatApp {
     /// Executes a pending delete: sends the entry to the OS trash, tombstones
     /// the arena node, invalidates cached stats and layout, and cleans up
     /// duplicate groups. Called when the user confirms in the delete dialog.
-    #[allow(dead_code)] // Called by upcoming MS13 confirmation dialog task.
     fn confirm_delete(&mut self) {
         let pending = match self.pending_delete.take() {
             Some(p) => p,
@@ -457,6 +455,46 @@ impl eframe::App for RustDirStatApp {
             self.drain_events();
             self.maybe_live_recompute();
             ctx.request_repaint();
+        }
+
+        // --- Confirmation dialog ---
+        // Rendered before panels so it draws on top. Button clicks set flags
+        // that are acted on after the Window block to avoid borrow conflicts.
+        let mut do_confirm = false;
+        let mut do_cancel = false;
+        if let Some(ref pending) = self.pending_delete {
+            let item_type = if pending.is_dir { "directory" } else { "file" };
+            egui::Window::new("Confirm Delete")
+                .collapsible(false)
+                .resizable(false)
+                .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
+                .show(ctx, |ui| {
+                    ui.label(format!(
+                        "Delete {} \"{}\"?",
+                        item_type, pending.path_display,
+                    ));
+                    ui.label(format!("Size: {}", format_bytes(pending.size_bytes)));
+                    ui.label("The item will be moved to the recycle bin.");
+                    ui.separator();
+                    ui.horizontal(|ui| {
+                        if ui.button("Delete").clicked() {
+                            do_confirm = true;
+                        }
+                        if ui.button("Cancel").clicked() {
+                            do_cancel = true;
+                        }
+                    });
+                    if let Some(ref err) = self.delete_error {
+                        ui.colored_label(egui::Color32::from_rgb(255, 80, 80), err);
+                    }
+                });
+        }
+        if do_confirm {
+            self.confirm_delete();
+        }
+        if do_cancel {
+            self.pending_delete = None;
+            self.delete_error = None;
         }
 
         // --- Toolbar ---
@@ -573,13 +611,21 @@ impl eframe::App for RustDirStatApp {
         });
 
         // --- Duplicates panel (MS12) ---
+        let scan_complete = matches!(self.phase, ScanPhase::Complete(_));
         if let Some(ref tree) = self.tree
             && !self.duplicate_groups.is_empty()
         {
             egui::TopBottomPanel::bottom("duplicates_panel")
                 .resizable(true)
                 .show(ctx, |ui| {
-                    duplicates::show(&self.duplicate_groups, tree, &mut self.selected_node, ui);
+                    duplicates::show(
+                        &self.duplicate_groups,
+                        tree,
+                        &mut self.selected_node,
+                        scan_complete,
+                        &mut self.pending_delete,
+                        ui,
+                    );
                 });
         }
 
@@ -596,6 +642,8 @@ impl eframe::App for RustDirStatApp {
                             stats,
                             &mut self.tree_view_state,
                             &mut self.selected_node,
+                            scan_complete,
+                            &mut self.pending_delete,
                             ui,
                         );
                     }
@@ -676,6 +724,8 @@ impl eframe::App for RustDirStatApp {
                         &mut self.selected_node,
                         &self.selected_extension,
                         &mut self.treemap_root,
+                        scan_complete,
+                        &mut self.pending_delete,
                         ui,
                     );
                     // Invalidate layout if drill-down changed the root.

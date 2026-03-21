@@ -3,13 +3,15 @@
 //! Displays duplicate file groups sorted by wasted space, with collapsible
 //! headers and selectable file paths for cross-panel synchronization.
 
-use crate::{DuplicateGroup, format_bytes};
+use crate::{DuplicateGroup, PendingDelete, format_bytes};
 use rds_core::tree::DirTree;
 
 pub(crate) fn show(
     groups: &[DuplicateGroup],
     tree: &DirTree,
     selected_node: &mut Option<usize>,
+    scan_complete: bool,
+    pending_delete: &mut Option<PendingDelete>,
     ui: &mut egui::Ui,
 ) {
     let total_wasted: u64 = groups.iter().map(|g| g.wasted_bytes).sum();
@@ -45,8 +47,23 @@ pub(crate) fn show(
                         let path = tree.path(idx);
                         let path_str = path.display().to_string();
                         let is_selected = *selected_node == Some(idx);
-                        if ui.selectable_label(is_selected, &path_str).clicked() {
+                        let response = ui.selectable_label(is_selected, &path_str);
+                        if response.clicked() {
                             *selected_node = Some(idx);
+                        }
+                        if scan_complete {
+                            response.context_menu(|ui| {
+                                if ui.button("Delete").clicked() {
+                                    let size = tree.get(idx).map(|n| n.size).unwrap_or(0);
+                                    *pending_delete = Some(PendingDelete {
+                                        node_index: idx,
+                                        path_display: path_str.clone(),
+                                        size_bytes: size,
+                                        is_dir: false,
+                                    });
+                                    ui.close();
+                                }
+                            });
                         }
                     }
                 });

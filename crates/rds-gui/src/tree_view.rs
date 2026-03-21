@@ -9,6 +9,8 @@ use std::collections::HashSet;
 
 use rds_core::tree::DirTree;
 
+use crate::PendingDelete;
+
 /// Horizontal pixels per tree depth level.
 const INDENT_PER_LEVEL: f32 = 20.0;
 /// Horizontal spacer matching the expand/collapse button width.
@@ -141,6 +143,8 @@ pub(crate) fn show(
     stats: &SubtreeStats,
     state: &mut TreeViewState,
     selected: &mut Option<usize>,
+    scan_complete: bool,
+    pending_delete: &mut Option<PendingDelete>,
     ui: &mut egui::Ui,
 ) {
     // Detect external selection change (e.g., treemap click).
@@ -154,19 +158,32 @@ pub(crate) fn show(
     }
 
     egui::ScrollArea::vertical().show(ui, |ui| {
-        render_node(tree, tree.root(), stats, state, selected, ui, 0);
+        render_node(
+            tree,
+            tree.root(),
+            stats,
+            state,
+            selected,
+            scan_complete,
+            pending_delete,
+            ui,
+            0,
+        );
     });
 }
 
 /// Renders a single tree node and, if expanded, its children recursively.
 /// Only expanded branches are visited, keeping per-frame cost proportional
 /// to visible rows. (ref: DL-007)
+#[allow(clippy::too_many_arguments)]
 fn render_node(
     tree: &DirTree,
     index: usize,
     stats: &SubtreeStats,
     state: &mut TreeViewState,
     selected: &mut Option<usize>,
+    scan_complete: bool,
+    pending_delete: &mut Option<PendingDelete>,
     ui: &mut egui::Ui,
     depth: usize,
 ) {
@@ -222,13 +239,40 @@ fn render_node(
             response.scroll_to_me(Some(egui::Align::Center));
             state.pending_scroll = false;
         }
+
+        // Right-click context menu (only when scan is complete and not root).
+        if scan_complete && index != tree.root() {
+            response.context_menu(|ui| {
+                if ui.button("Delete").clicked() {
+                    let path = tree.path(index);
+                    let size = if is_dir { stats.size(index) } else { node.size };
+                    *pending_delete = Some(PendingDelete {
+                        node_index: index,
+                        path_display: path.display().to_string(),
+                        size_bytes: size,
+                        is_dir,
+                    });
+                    ui.close();
+                }
+            });
+        }
     });
 
     // Recurse into children sorted by size descending.
     if is_expanded {
         let children = sorted_children(tree, index, stats);
         for child_idx in children {
-            render_node(tree, child_idx, stats, state, selected, ui, depth + 1);
+            render_node(
+                tree,
+                child_idx,
+                stats,
+                state,
+                selected,
+                scan_complete,
+                pending_delete,
+                ui,
+                depth + 1,
+            );
         }
     }
 }

@@ -5,6 +5,7 @@
 //! produce output rects. Colors come from `ext_stats::hsl_to_color32` via
 //! `rds_core::stats::color_for_extension`.
 
+use crate::PendingDelete;
 use crate::ext_stats;
 use crate::tree_view::SubtreeStats;
 use rds_core::tree::DirTree;
@@ -353,12 +354,15 @@ pub(crate) fn breadcrumb_chain(tree: &DirTree, treemap_root: usize) -> Vec<(usiz
 /// Large rectangles (>= MIN_CUSHION_DIM) get cushion-shaded mesh rendering.
 /// Small rectangles get flat fills. Both use the 0.5px inset for visual
 /// separation. (ref: DL-002, DL-005, DL-006, DL-007, DL-008, DL-009)
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn show(
     layout: &TreemapLayout,
     tree: &DirTree,
     selected: &mut Option<usize>,
     highlighted_extension: &Option<String>,
     treemap_root: &mut usize,
+    scan_complete: bool,
+    pending_delete: &mut Option<PendingDelete>,
     ui: &mut egui::Ui,
 ) {
     let (response, painter) = ui.allocate_painter(layout.last_size, egui::Sense::click());
@@ -454,6 +458,38 @@ pub(crate) fn show(
     // Click to select node.
     if response.clicked() {
         *selected = hovered_index;
+    }
+
+    // Right-click to select node for context menu.
+    if response.secondary_clicked() {
+        *selected = hovered_index;
+    }
+
+    // Context menu for selected node (only when scan is complete and not root).
+    // Guard attachment so right-clicking empty space doesn't show an empty popup.
+    if scan_complete
+        && selected.is_some_and(|idx| idx != tree.root())
+    {
+        response.context_menu(|ui| {
+            if let Some(sel_idx) = *selected
+                && ui.button("Delete").clicked()
+            {
+                let node = tree.get(sel_idx).unwrap();
+                let path = tree.path(sel_idx);
+                let size = if node.is_dir {
+                    tree.subtree_size(sel_idx)
+                } else {
+                    node.size
+                };
+                *pending_delete = Some(PendingDelete {
+                    node_index: sel_idx,
+                    path_display: path.display().to_string(),
+                    size_bytes: size,
+                    is_dir: node.is_dir,
+                });
+                ui.close();
+            }
+        });
     }
 
     // Double-click to drill into subdirectory. (ref: DL-005)

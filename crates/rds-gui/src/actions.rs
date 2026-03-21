@@ -14,7 +14,6 @@ use crate::DuplicateGroup;
 /// Returns `Ok(freed_bytes)` on success (subtree size before tombstoning) or
 /// `Err` with the trash error message if the OS trash operation fails.
 /// No tombstoning occurs on failure.
-#[allow(dead_code)] // Called by confirm_delete, which is used by upcoming MS13 tasks.
 pub(crate) fn execute_delete(tree: &mut DirTree, index: usize) -> Result<u64, String> {
     let path = tree.path(index);
     let freed_bytes = tree.subtree_size(index);
@@ -29,7 +28,6 @@ pub(crate) fn execute_delete(tree: &mut DirTree, index: usize) -> Result<u64, St
 /// deleted, recalculates `wasted_bytes` from the remaining members, and
 /// removes groups with fewer than 2 members. Re-sorts by `wasted_bytes`
 /// descending.
-#[allow(dead_code)] // Called by confirm_delete, which is used by upcoming MS13 tasks.
 pub(crate) fn cleanup_duplicate_groups(groups: &mut Vec<DuplicateGroup>, tree: &DirTree) {
     for group in groups.iter_mut() {
         group
