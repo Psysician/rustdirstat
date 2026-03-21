@@ -91,6 +91,7 @@ mod tests {
             parent: None,
             extension: Some("txt".to_string()),
             modified: None,
+            deleted: false,
         };
         let event = ScanEvent::NodeDiscovered {
             node: node.clone(),

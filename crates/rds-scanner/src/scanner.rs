@@ -57,6 +57,7 @@ fn send_root_node(
         parent: None,
         extension: None,
         modified: root_modified,
+        deleted: false,
     };
 
     if tx
@@ -101,6 +102,7 @@ fn entry_to_node(entry: &jwalk::DirEntry<((), ())>) -> Result<FileNode, String> 
         parent: None,
         extension: ext,
         modified,
+        deleted: false,
     })
 }
 

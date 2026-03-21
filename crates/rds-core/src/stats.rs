@@ -45,6 +45,7 @@ pub fn compute_extension_stats(tree: &DirTree) -> Vec<ExtensionStats> {
     for i in 0..tree.len() {
         if let Some(node) = tree.get(i)
             && !node.is_dir
+            && !node.deleted
         {
             let ext = node.extension.clone().unwrap_or_default();
             let entry = groups.entry(ext).or_insert((0, 0));
@@ -121,6 +122,7 @@ mod tests {
             parent: None,
             extension: Some("rs".to_string()),
             modified: None,
+            deleted: false,
         };
         tree.insert(0, file_a);
 
@@ -132,6 +134,7 @@ mod tests {
             parent: None,
             extension: Some("rs".to_string()),
             modified: None,
+            deleted: false,
         };
         tree.insert(0, file_b);
 
@@ -143,6 +146,7 @@ mod tests {
             parent: None,
             extension: Some("txt".to_string()),
             modified: None,
+            deleted: false,
         };
         tree.insert(0, file_c);
 
@@ -169,6 +173,7 @@ mod tests {
             parent: None,
             extension: None,
             modified: None,
+            deleted: false,
         };
         tree.insert(0, no_ext);
         let stats = compute_extension_stats(&tree);
@@ -176,5 +181,102 @@ mod tests {
         assert_eq!(stats[0].extension, "");
         assert_eq!(stats[0].count, 1);
         assert_eq!(stats[0].total_bytes, 200);
+    }
+
+    #[test]
+    fn compute_stats_excludes_deleted_file() {
+        let mut tree = DirTree::new("/root");
+
+        let file_a = FileNode {
+            name: "a.rs".to_string(),
+            size: 1000,
+            is_dir: false,
+            children: Vec::new(),
+            parent: None,
+            extension: Some("rs".to_string()),
+            modified: None,
+            deleted: false,
+        };
+        let idx_a = tree.insert(0, file_a);
+
+        let file_b = FileNode {
+            name: "b.rs".to_string(),
+            size: 500,
+            is_dir: false,
+            children: Vec::new(),
+            parent: None,
+            extension: Some("rs".to_string()),
+            modified: None,
+            deleted: false,
+        };
+        tree.insert(0, file_b);
+
+        let file_c = FileNode {
+            name: "c.txt".to_string(),
+            size: 500,
+            is_dir: false,
+            children: Vec::new(),
+            parent: None,
+            extension: Some("txt".to_string()),
+            modified: None,
+            deleted: false,
+        };
+        tree.insert(0, file_c);
+
+        // Tombstone a.rs (1000 bytes).
+        tree.tombstone(idx_a);
+
+        let stats = compute_extension_stats(&tree);
+        // Only b.rs (500) and c.txt (500) remain — equal bytes, sort is stable by bytes desc.
+        assert_eq!(stats.len(), 2);
+
+        let rs_stat = stats.iter().find(|s| s.extension == "rs").unwrap();
+        assert_eq!(rs_stat.count, 1, "only b.rs should remain");
+        assert_eq!(rs_stat.total_bytes, 500);
+
+        let txt_stat = stats.iter().find(|s| s.extension == "txt").unwrap();
+        assert_eq!(txt_stat.count, 1);
+        assert_eq!(txt_stat.total_bytes, 500);
+        assert_eq!(txt_stat.percentage, 50.0);
+    }
+
+    #[test]
+    fn compute_stats_deleted_file_removes_extension_group() {
+        let mut tree = DirTree::new("/root");
+
+        let file_a = FileNode {
+            name: "a.rs".to_string(),
+            size: 1000,
+            is_dir: false,
+            children: Vec::new(),
+            parent: None,
+            extension: Some("rs".to_string()),
+            modified: None,
+            deleted: false,
+        };
+        tree.insert(0, file_a);
+
+        let file_c = FileNode {
+            name: "only.txt".to_string(),
+            size: 500,
+            is_dir: false,
+            children: Vec::new(),
+            parent: None,
+            extension: Some("txt".to_string()),
+            modified: None,
+            deleted: false,
+        };
+        let idx_c = tree.insert(0, file_c);
+
+        // Tombstone the only .txt file.
+        tree.tombstone(idx_c);
+
+        let stats = compute_extension_stats(&tree);
+        // txt extension should be completely gone.
+        assert_eq!(stats.len(), 1);
+        assert_eq!(stats[0].extension, "rs");
+        assert_eq!(stats[0].count, 1);
+        assert_eq!(stats[0].total_bytes, 1000);
+        assert_eq!(stats[0].percentage, 100.0);
     }
 }

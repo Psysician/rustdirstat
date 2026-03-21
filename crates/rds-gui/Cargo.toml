@@ -16,3 +16,4 @@ streemap = { workspace = true }
 crossbeam-channel = { workspace = true }
 tracing = { workspace = true }
 rfd = { workspace = true }
+trash = { workspace = true }

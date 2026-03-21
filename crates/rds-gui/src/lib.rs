@@ -19,6 +19,7 @@ use rds_core::scan::{ScanConfig, ScanEvent, ScanStats};
 use rds_core::stats::ExtensionStats;
 use rds_core::tree::DirTree;
 
+mod actions;
 mod duplicates;
 mod ext_stats;
 mod tree_view;
@@ -38,6 +39,15 @@ enum ScanPhase {
 pub(crate) struct DuplicateGroup {
     pub(crate) node_indices: Vec<usize>,
     pub(crate) wasted_bytes: u64,
+}
+
+/// Pending delete confirmation state. Populated when the user initiates a
+/// delete action; consumed by `confirm_delete` when the user confirms.
+pub(crate) struct PendingDelete {
+    pub(crate) node_index: usize,
+    pub(crate) path_display: String,
+    pub(crate) size_bytes: u64,
+    pub(crate) is_dir: bool,
 }
 
 /// Main application state. Holds the scan lifecycle, DirTree arena being
@@ -93,6 +103,14 @@ pub struct RustDirStatApp {
     hash_duplicates_enabled: bool,
     /// True while the scanner is running the duplicate detection pipeline.
     detecting_duplicates: bool,
+    /// Pending delete confirmation. Set when user initiates delete, consumed
+    /// by `confirm_delete` when user confirms in the dialog.
+    pending_delete: Option<PendingDelete>,
+    /// Cumulative bytes freed by trash-delete actions in the current scan session.
+    /// Reset to 0 when a new scan starts.
+    freed_bytes: u64,
+    /// Error message from the most recent failed delete attempt.
+    delete_error: Option<String>,
 }
 
 impl Default for RustDirStatApp {
@@ -137,6 +155,9 @@ impl RustDirStatApp {
             duplicate_groups: Vec::new(),
             hash_duplicates_enabled: true,
             detecting_duplicates: false,
+            pending_delete: None,
+            freed_bytes: 0,
+            delete_error: None,
         }
     }
 
@@ -183,6 +204,9 @@ impl RustDirStatApp {
         self.treemap_root = 0;
         self.duplicate_groups = Vec::new();
         self.detecting_duplicates = false;
+        self.pending_delete = None;
+        self.freed_bytes = 0;
+        self.delete_error = None;
         self.path_error = None;
         self.phase = ScanPhase::Scanning;
         self.scan_path = Some(path.clone());
@@ -349,6 +373,73 @@ impl RustDirStatApp {
         self.last_live_recompute = Some(now);
         self.live_node_count = current_count;
     }
+
+    /// Executes a pending delete: sends the entry to the OS trash, tombstones
+    /// the arena node, invalidates cached stats and layout, and cleans up
+    /// duplicate groups. Called when the user confirms in the delete dialog.
+    fn confirm_delete(&mut self) {
+        let pending = match self.pending_delete.take() {
+            Some(p) => p,
+            None => return,
+        };
+
+        let tree = match self.tree.as_mut() {
+            Some(t) => t,
+            None => return,
+        };
+
+        match actions::execute_delete(tree, pending.node_index) {
+            Ok(freed) => {
+                self.freed_bytes += freed;
+
+                // Recompute cached stats immediately. There is no lazy-recompute
+                // path in ScanPhase::Complete — panels check for Some and show
+                // fallback text when None.
+                let tree_ref = self.tree.as_ref().unwrap();
+                self.subtree_stats = Some(tree_view::SubtreeStats::compute(tree_ref));
+                self.extension_stats = Some(rds_core::stats::compute_extension_stats(tree_ref));
+                self.treemap_layout = None;
+
+                // Clear selection if it pointed at a now-deleted node (the target
+                // or any of its descendants).
+                if let Some(sel) = self.selected_node
+                    && self
+                        .tree
+                        .as_ref()
+                        .unwrap()
+                        .get(sel)
+                        .is_some_and(|n| n.deleted)
+                {
+                    self.selected_node = None;
+                }
+
+                // Reset treemap root if it pointed at a now-deleted node (e.g.,
+                // user drilled into a subdirectory that was then deleted).
+                if self
+                    .tree
+                    .as_ref()
+                    .unwrap()
+                    .get(self.treemap_root)
+                    .is_some_and(|n| n.deleted)
+                {
+                    self.treemap_root = self.tree.as_ref().unwrap().root();
+                }
+
+                actions::cleanup_duplicate_groups(
+                    &mut self.duplicate_groups,
+                    self.tree.as_ref().unwrap(),
+                );
+
+                self.delete_error = None;
+            }
+            Err(msg) => {
+                self.delete_error = Some(msg);
+                // Restore pending_delete so the dialog stays open and shows
+                // the error message instead of silently disappearing.
+                self.pending_delete = Some(pending);
+            }
+        }
+    }
 }
 
 /// Formats a byte count as a human-readable string (B/KB/MB/GB/TB).
@@ -383,6 +474,46 @@ impl eframe::App for RustDirStatApp {
             self.drain_events();
             self.maybe_live_recompute();
             ctx.request_repaint();
+        }
+
+        // --- Confirmation dialog ---
+        // Rendered before panels so it draws on top. Button clicks set flags
+        // that are acted on after the Window block to avoid borrow conflicts.
+        let mut do_confirm = false;
+        let mut do_cancel = false;
+        if let Some(ref pending) = self.pending_delete {
+            let item_type = if pending.is_dir { "directory" } else { "file" };
+            egui::Window::new("Confirm Delete")
+                .collapsible(false)
+                .resizable(false)
+                .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
+                .show(ctx, |ui| {
+                    ui.label(format!(
+                        "Delete {} \"{}\"?",
+                        item_type, pending.path_display,
+                    ));
+                    ui.label(format!("Size: {}", format_bytes(pending.size_bytes)));
+                    ui.label("The item will be moved to the recycle bin.");
+                    ui.separator();
+                    ui.horizontal(|ui| {
+                        if ui.button("Delete").clicked() {
+                            do_confirm = true;
+                        }
+                        if ui.button("Cancel").clicked() {
+                            do_cancel = true;
+                        }
+                    });
+                    if let Some(ref err) = self.delete_error {
+                        ui.colored_label(egui::Color32::from_rgb(255, 80, 80), err);
+                    }
+                });
+        }
+        if do_confirm {
+            self.confirm_delete();
+        }
+        if do_cancel {
+            self.pending_delete = None;
+            self.delete_error = None;
         }
 
         // --- Toolbar ---
@@ -493,19 +624,30 @@ impl eframe::App for RustDirStatApp {
                     if self.scan_errors > 0 {
                         text.push_str(&format!(" ({} errors)", self.scan_errors));
                     }
+                    if self.freed_bytes > 0 {
+                        text.push_str(&format!(" | {} freed", format_bytes(self.freed_bytes)));
+                    }
                     ui.label(text);
                 }
             }
         });
 
         // --- Duplicates panel (MS12) ---
+        let scan_complete = matches!(self.phase, ScanPhase::Complete(_));
         if let Some(ref tree) = self.tree
             && !self.duplicate_groups.is_empty()
         {
             egui::TopBottomPanel::bottom("duplicates_panel")
                 .resizable(true)
                 .show(ctx, |ui| {
-                    duplicates::show(&self.duplicate_groups, tree, &mut self.selected_node, ui);
+                    duplicates::show(
+                        &self.duplicate_groups,
+                        tree,
+                        &mut self.selected_node,
+                        scan_complete,
+                        &mut self.pending_delete,
+                        ui,
+                    );
                 });
         }
 
@@ -522,6 +664,8 @@ impl eframe::App for RustDirStatApp {
                             stats,
                             &mut self.tree_view_state,
                             &mut self.selected_node,
+                            scan_complete,
+                            &mut self.pending_delete,
                             ui,
                         );
                     }
@@ -602,6 +746,8 @@ impl eframe::App for RustDirStatApp {
                         &mut self.selected_node,
                         &self.selected_extension,
                         &mut self.treemap_root,
+                        scan_complete,
+                        &mut self.pending_delete,
                         ui,
                     );
                     // Invalidate layout if drill-down changed the root.
@@ -646,6 +792,9 @@ mod tests {
         assert!(app.duplicate_groups.is_empty());
         assert!(app.hash_duplicates_enabled);
         assert!(!app.detecting_duplicates);
+        assert!(app.pending_delete.is_none());
+        assert_eq!(app.freed_bytes, 0);
+        assert!(app.delete_error.is_none());
         assert!(app.path_error.is_none());
         assert!(app.scan_path.is_none());
         assert!(app.path_input.is_empty());

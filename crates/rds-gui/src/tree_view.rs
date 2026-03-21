@@ -9,6 +9,8 @@ use std::collections::HashSet;
 
 use rds_core::tree::DirTree;
 
+use crate::PendingDelete;
+
 /// Horizontal pixels per tree depth level.
 const INDENT_PER_LEVEL: f32 = 20.0;
 /// Horizontal spacer matching the expand/collapse button width.
@@ -28,8 +30,11 @@ impl SubtreeStats {
         let mut file_counts = vec![0u64; len];
 
         // Initialize with each node's own values.
+        // Deleted (tombstoned) nodes contribute nothing.
         for i in 0..len {
-            if let Some(node) = tree.get(i) {
+            if let Some(node) = tree.get(i)
+                && !node.deleted
+            {
                 sizes[i] = node.size;
                 if !node.is_dir {
                     file_counts[i] = 1;
@@ -41,8 +46,10 @@ impl SubtreeStats {
         // (depth-first insertion), so reverse iteration visits children
         // before parents — each child's accumulated total is final when
         // added to its parent.
+        // Deleted nodes are skipped so their values never propagate upward.
         for i in (1..len).rev() {
             if let Some(node) = tree.get(i)
+                && !node.deleted
                 && let Some(parent) = node.parent
             {
                 sizes[parent] += sizes[i];
@@ -104,7 +111,12 @@ impl TreeViewState {
 
 /// Returns child indices of `index` sorted by subtree size descending.
 pub(crate) fn sorted_children(tree: &DirTree, index: usize, stats: &SubtreeStats) -> Vec<usize> {
-    let mut children: Vec<usize> = tree.children(index).to_vec();
+    let mut children: Vec<usize> = tree
+        .children(index)
+        .iter()
+        .copied()
+        .filter(|&c| tree.get(c).is_some_and(|n| !n.deleted))
+        .collect();
     children.sort_by(|&a, &b| stats.size(b).cmp(&stats.size(a)));
     children
 }
@@ -131,6 +143,8 @@ pub(crate) fn show(
     stats: &SubtreeStats,
     state: &mut TreeViewState,
     selected: &mut Option<usize>,
+    scan_complete: bool,
+    pending_delete: &mut Option<PendingDelete>,
     ui: &mut egui::Ui,
 ) {
     // Detect external selection change (e.g., treemap click).
@@ -144,19 +158,32 @@ pub(crate) fn show(
     }
 
     egui::ScrollArea::vertical().show(ui, |ui| {
-        render_node(tree, tree.root(), stats, state, selected, ui, 0);
+        render_node(
+            tree,
+            tree.root(),
+            stats,
+            state,
+            selected,
+            scan_complete,
+            pending_delete,
+            ui,
+            0,
+        );
     });
 }
 
 /// Renders a single tree node and, if expanded, its children recursively.
 /// Only expanded branches are visited, keeping per-frame cost proportional
 /// to visible rows. (ref: DL-007)
+#[allow(clippy::too_many_arguments)]
 fn render_node(
     tree: &DirTree,
     index: usize,
     stats: &SubtreeStats,
     state: &mut TreeViewState,
     selected: &mut Option<usize>,
+    scan_complete: bool,
+    pending_delete: &mut Option<PendingDelete>,
     ui: &mut egui::Ui,
     depth: usize,
 ) {
@@ -212,13 +239,40 @@ fn render_node(
             response.scroll_to_me(Some(egui::Align::Center));
             state.pending_scroll = false;
         }
+
+        // Right-click context menu (only when scan is complete and not root).
+        if scan_complete && index != tree.root() {
+            response.context_menu(|ui| {
+                if ui.button("Delete").clicked() {
+                    let path = tree.path(index);
+                    let size = if is_dir { stats.size(index) } else { node.size };
+                    *pending_delete = Some(PendingDelete {
+                        node_index: index,
+                        path_display: path.display().to_string(),
+                        size_bytes: size,
+                        is_dir,
+                    });
+                    ui.close();
+                }
+            });
+        }
     });
 
     // Recurse into children sorted by size descending.
     if is_expanded {
         let children = sorted_children(tree, index, stats);
         for child_idx in children {
-            render_node(tree, child_idx, stats, state, selected, ui, depth + 1);
+            render_node(
+                tree,
+                child_idx,
+                stats,
+                state,
+                selected,
+                scan_complete,
+                pending_delete,
+                ui,
+                depth + 1,
+            );
         }
     }
 }
@@ -237,6 +291,7 @@ mod tests {
             parent: None,
             extension: None,
             modified: None,
+            deleted: false,
         }
     }
 
@@ -249,6 +304,7 @@ mod tests {
             parent: None,
             extension: None,
             modified: None,
+            deleted: false,
         }
     }
 
@@ -422,5 +478,173 @@ mod tests {
 
         assert!(state.is_expanded(0));
         assert!(state.is_expanded(d1));
+    }
+
+    #[test]
+    fn subtree_stats_excludes_deleted_file() {
+        let mut tree = DirTree::new("/root");
+        let sub = tree.insert(0, make_dir("sub"));
+        let a = tree.insert(sub, make_file("a.txt", 100));
+        tree.insert(sub, make_file("b.txt", 200));
+        tree.insert(0, make_file("c.txt", 50));
+
+        // Before tombstone: root = 350 bytes, 3 files; sub = 300 bytes, 2 files.
+        let stats = SubtreeStats::compute(&tree);
+        assert_eq!(stats.size(0), 350);
+        assert_eq!(stats.file_count(0), 3);
+        assert_eq!(stats.size(sub), 300);
+        assert_eq!(stats.file_count(sub), 2);
+
+        // Tombstone a.txt (100 bytes).
+        tree.tombstone(a);
+
+        let stats = SubtreeStats::compute(&tree);
+        assert_eq!(stats.size(0), 250, "root size should exclude deleted file");
+        assert_eq!(
+            stats.file_count(0),
+            2,
+            "root file count should exclude deleted file"
+        );
+        assert_eq!(stats.size(sub), 200, "sub size should exclude deleted file");
+        assert_eq!(
+            stats.file_count(sub),
+            1,
+            "sub file count should exclude deleted file"
+        );
+    }
+
+    #[test]
+    fn subtree_stats_excludes_deleted_directory() {
+        let mut tree = DirTree::new("/root");
+        let sub = tree.insert(0, make_dir("sub"));
+        tree.insert(sub, make_file("a.txt", 100));
+        tree.insert(sub, make_file("b.txt", 200));
+        tree.insert(0, make_file("c.txt", 50));
+
+        // Tombstone entire subdirectory (sub + a.txt + b.txt).
+        tree.tombstone(sub);
+
+        let stats = SubtreeStats::compute(&tree);
+        assert_eq!(stats.size(0), 50, "root size should only include c.txt");
+        assert_eq!(stats.file_count(0), 1, "root should count only c.txt");
+        assert_eq!(stats.size(sub), 0, "deleted sub should have zero size");
+        assert_eq!(
+            stats.file_count(sub),
+            0,
+            "deleted sub should have zero file count"
+        );
+    }
+
+    #[test]
+    fn sorted_children_excludes_deleted() {
+        let mut tree = DirTree::new("/root");
+        let small = tree.insert(0, make_file("small.txt", 10));
+        tree.insert(0, make_file("big.txt", 1000));
+        tree.insert(0, make_file("medium.txt", 500));
+
+        // Tombstone the small file.
+        tree.tombstone(small);
+
+        let stats = SubtreeStats::compute(&tree);
+        let sorted = sorted_children(&tree, 0, &stats);
+        // small.txt (index 1) should be excluded.
+        assert_eq!(sorted, vec![2, 3]);
+    }
+
+    #[test]
+    fn stats_recompute_after_tombstone_directory_reflects_decreased_totals() {
+        // Build tree:
+        //   /root
+        //   ├── dir_a/         (contains 300 bytes across 2 files)
+        //   │   ├── a1.txt  100
+        //   │   └── a2.txt  200
+        //   ├── dir_b/         (contains 750 bytes across 3 files)
+        //   │   ├── b1.txt  250
+        //   │   ├── b2.txt  250
+        //   │   └── b3.txt  250
+        //   └── top.txt      50
+        let mut tree = DirTree::new("/root");
+        let dir_a = tree.insert(0, make_dir("dir_a"));
+        tree.insert(dir_a, make_file("a1.txt", 100));
+        tree.insert(dir_a, make_file("a2.txt", 200));
+        let dir_b = tree.insert(0, make_dir("dir_b"));
+        tree.insert(dir_b, make_file("b1.txt", 250));
+        tree.insert(dir_b, make_file("b2.txt", 250));
+        tree.insert(dir_b, make_file("b3.txt", 250));
+        tree.insert(0, make_file("top.txt", 50));
+
+        // Before: root = 1100 bytes, 6 files.
+        let stats_before = SubtreeStats::compute(&tree);
+        assert_eq!(stats_before.size(0), 1100);
+        assert_eq!(stats_before.file_count(0), 6);
+        assert_eq!(stats_before.size(dir_a), 300);
+        assert_eq!(stats_before.file_count(dir_a), 2);
+        assert_eq!(stats_before.size(dir_b), 750);
+        assert_eq!(stats_before.file_count(dir_b), 3);
+
+        // Tombstone dir_a (removes 300 bytes and 2 files).
+        tree.tombstone(dir_a);
+
+        let stats_after = SubtreeStats::compute(&tree);
+        assert_eq!(
+            stats_after.size(0),
+            800,
+            "root size should decrease by tombstoned subtree (300)"
+        );
+        assert_eq!(
+            stats_after.file_count(0),
+            4,
+            "root file count should decrease by tombstoned files (2)"
+        );
+        // dir_b and top.txt remain unchanged.
+        assert_eq!(stats_after.size(dir_b), 750);
+        assert_eq!(stats_after.file_count(dir_b), 3);
+        // dir_a itself reports 0.
+        assert_eq!(stats_after.size(dir_a), 0);
+        assert_eq!(stats_after.file_count(dir_a), 0);
+    }
+
+    #[test]
+    fn stats_tombstone_all_children_yields_zero_size_and_count() {
+        // Build tree:
+        //   /root
+        //   └── parent_dir/
+        //       ├── child1.txt  400
+        //       ├── child2.txt  600
+        //       └── sub/
+        //           └── deep.txt  1000
+        let mut tree = DirTree::new("/root");
+        let parent_dir = tree.insert(0, make_dir("parent_dir"));
+        let child1 = tree.insert(parent_dir, make_file("child1.txt", 400));
+        let child2 = tree.insert(parent_dir, make_file("child2.txt", 600));
+        let sub = tree.insert(parent_dir, make_dir("sub"));
+        tree.insert(sub, make_file("deep.txt", 1000));
+
+        // Before: parent_dir = 2000 bytes, 3 files.
+        let stats_before = SubtreeStats::compute(&tree);
+        assert_eq!(stats_before.size(parent_dir), 2000);
+        assert_eq!(stats_before.file_count(parent_dir), 3);
+
+        // Tombstone all children of parent_dir one by one.
+        tree.tombstone(child1);
+        tree.tombstone(child2);
+        tree.tombstone(sub); // also removes deep.txt
+
+        let stats_after = SubtreeStats::compute(&tree);
+        assert_eq!(
+            stats_after.size(parent_dir),
+            0,
+            "directory with all children tombstoned should show 0 size"
+        );
+        assert_eq!(
+            stats_after.file_count(parent_dir),
+            0,
+            "directory with all children tombstoned should show 0 file count"
+        );
+        // parent_dir itself is not deleted — it just has no live children.
+        assert!(!tree.get(parent_dir).unwrap().deleted);
+        // Root stats also reflect the change.
+        assert_eq!(stats_after.size(0), 0);
+        assert_eq!(stats_after.file_count(0), 0);
     }
 }
