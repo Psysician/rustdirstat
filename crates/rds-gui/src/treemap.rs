@@ -5,8 +5,8 @@
 //! produce output rects. Colors come from `ext_stats::hsl_to_color32` via
 //! `rds_core::stats::color_for_extension`.
 
-// Items are pub(crate) for consumption by the treemap panel (Task 2/3);
-// suppress dead_code until they are wired in.
+// Items are pub(crate) for consumption by the treemap panel;
+// suppress dead_code until the show function is wired into lib.rs (Task 3).
 #![allow(dead_code)]
 
 use crate::ext_stats;
@@ -121,6 +121,75 @@ fn compute_recursive(
                 color,
             });
         }
+    }
+}
+
+/// Renders the cached treemap layout with hover tooltips and click-to-select.
+///
+/// `layout` coordinates are relative to (0,0); this function offsets them
+/// by the panel's allocated position. (ref: DL-002, DL-007, DL-008, DL-009)
+pub(crate) fn show(
+    layout: &TreemapLayout,
+    tree: &DirTree,
+    selected: &mut Option<usize>,
+    ui: &mut egui::Ui,
+) {
+    let (response, painter) = ui.allocate_painter(
+        layout.last_size,
+        egui::Sense::click(),
+    );
+    let offset = response.rect.min.to_vec2();
+
+    // Draw all rectangles. (ref: DL-007)
+    for rect_info in &layout.rects {
+        let abs_rect = rect_info.rect.translate(offset);
+        // Inset by 0.5px for visual separation between adjacent rectangles.
+        painter.rect_filled(abs_rect.shrink(0.5), 0.0, rect_info.color);
+    }
+
+    // Highlight selected node with a white border. (ref: DL-008)
+    if let Some(sel_idx) = *selected
+        && let Some(hit) = layout.rects.iter().find(|r| r.node_index == sel_idx)
+    {
+        let abs_rect = hit.rect.translate(offset);
+        painter.rect_stroke(
+            abs_rect,
+            0.0,
+            egui::Stroke::new(2.0, egui::Color32::WHITE),
+            egui::StrokeKind::Outside,
+        );
+    }
+
+    // Find which rectangle the pointer is hovering over.
+    let hovered_index = response.hover_pos().and_then(|pos| {
+        let rel = pos - offset;
+        layout
+            .rects
+            .iter()
+            .find(|r| r.rect.contains(rel))
+            .map(|r| r.node_index)
+    });
+
+    // Hover tooltip: full path + human-readable size. (ref: DL-009)
+    #[allow(deprecated)]
+    if let Some(idx) = hovered_index
+        && let Some(node) = tree.get(idx)
+    {
+        let path = tree.path(idx);
+        egui::show_tooltip_at_pointer(
+            ui.ctx(),
+            ui.layer_id(),
+            response.id.with("tip"),
+            |ui| {
+                ui.label(path.display().to_string());
+                ui.label(crate::format_bytes(node.size));
+            },
+        );
+    }
+
+    // Click to select node.
+    if response.clicked() {
+        *selected = hovered_index;
     }
 }
 
