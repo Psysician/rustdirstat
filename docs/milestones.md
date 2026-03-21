@@ -88,7 +88,7 @@ Wire up cross-panel selection: click in tree view highlights in treemap and ext 
 
 ---
 
-## MS11 — Incremental Scan Display
+## ~~MS11 — Incremental Scan Display~~ DONE
 
 Show tree and treemap updating in real-time during scan (not just after completion). Throttle treemap re-layout to max 2x/second during scan. Progress bar with ETA. Tree view auto-expands root during scan.
 
@@ -96,7 +96,7 @@ Show tree and treemap updating in real-time during scan (not just after completi
 
 ---
 
-## MS12 — Duplicate Detection
+## ~~MS12 — Duplicate Detection~~ DONE
 
 Implement `DuplicateDetector` in `rds-scanner`. 3-phase: group by size, partial hash (4KB), full SHA-256 via rayon. Sends `DuplicateFound` events. GUI shows duplicates panel/tab with groups, total wasted space, and per-group file list.
 
@@ -104,7 +104,7 @@ Implement `DuplicateDetector` in `rds-scanner`. 3-phase: group by size, partial 
 
 ---
 
-## MS13 — Delete Action (Trash)
+## ~~MS13 — Delete Action (Trash)~~ DONE
 
 Implement delete via `trash` crate (cross-platform recycle bin). Context menu on tree/treemap nodes. Confirmation dialog. After delete: remove node from tree, update sizes, re-layout treemap. Track freed space in session.
 

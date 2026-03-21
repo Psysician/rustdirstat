@@ -13,27 +13,31 @@ rustdirstat/
       README.md               # Arena invariants and index stability contract
       src/
         lib.rs                # Re-exports all public types from submodules
-        tree.rs               # FileNode + DirTree arena (Vec<FileNode> with usize indices)
+        tree.rs               # FileNode (with deleted flag) + DirTree arena (Vec<FileNode> with usize indices, tombstone())
         scan.rs               # ScanEvent enum, ScanConfig, ScanStats
         config.rs             # AppConfig + CustomCommand (TOML-deserializable)
-        stats.rs              # ExtensionStats, HslColor, color_for_extension(), compute_extension_stats()
-    rds-scanner/              # Parallel jwalk scanner + SHA-2 hashing (MS4 done)
-      Cargo.toml              # Deps: jwalk, crossbeam-channel, tracing, rds-core
+        stats.rs              # ExtensionStats, HslColor, color_for_extension(), compute_extension_stats() (filters deleted nodes)
+    rds-scanner/              # Parallel jwalk scanner + SHA-256 duplicate detection
+      Cargo.toml              # Deps: jwalk, crossbeam-channel, sha2, rayon, tracing, rds-core
       CLAUDE.md
       README.md               # Ordering invariant, abort design, skip_hidden parity
       src/
         lib.rs                # Module declarations and re-exports
         scanner.rs            # Scanner::scan() — jwalk traversal, cancel flag, max_nodes, event streaming
+        duplicate.rs          # DuplicateDetector — 3-phase pipeline (size grouping, partial hash, full SHA-256)
       tests/
         scan_integration.rs   # Integration tests with temp directory fixtures
-    rds-gui/                  # egui/eframe GUI: dir picker, tree view, ext stats, treemap (MS9 done)
-      Cargo.toml              # Deps: eframe, egui, streemap, crossbeam-channel, rds-core, rds-scanner, rfd
+        duplicate_integration.rs # Duplicate detection integration tests
+    rds-gui/                  # egui/eframe GUI: dir picker, tree view, ext stats, treemap, duplicates, delete actions
+      Cargo.toml              # Deps: eframe, egui, streemap, crossbeam-channel, rds-core, rds-scanner, rfd, trash
       CLAUDE.md
       src/
-        lib.rs                # RustDirStatApp: ScanPhase state machine, dir picker, scanner integration, 3-panel layout
-        tree_view.rs           # SubtreeStats cache, TreeViewState, sorted tree rendering
+        lib.rs                # RustDirStatApp: ScanPhase state machine, dir picker, scanner integration, 3-panel layout, PendingDelete, confirm_delete, delete dialog
+        tree_view.rs           # SubtreeStats cache (filters deleted), TreeViewState, sorted tree rendering with context menu
         ext_stats.rs           # hsl_to_color32, extension stats panel with stacked bar + Grid table
-        treemap.rs             # CushionCoeffs, TreemapLayout, recursive squarify, cushion mesh render
+        treemap.rs             # CushionCoeffs, TreemapLayout, recursive squarify, cushion mesh render, right-click context menu
+        duplicates.rs          # Duplicates bottom panel with collapsible groups, wasted space, context menu
+        actions.rs             # execute_delete (trash + tombstone), cleanup_duplicate_groups
   .github/
     workflows/
       ci.yml                  # Build + test + clippy + fmt on ubuntu/macos/windows
@@ -56,7 +60,10 @@ rustdirstat/
     ms7-extension-statistics-panel.md # MS7 plan (completed)
     ms8-treemap-layout-flat.md     # MS8 plan (completed)
     ms9-treemap-cushion-shading.md # MS9 plan (completed)
-    ms10-panel-synchronization.md  # MS10 plan
+    ms10-panel-synchronization.md  # MS10 plan (completed)
+    ms11-incremental-scan-display.md # MS11 plan (completed)
+    ms12-duplicate-detection.md      # MS12 plan (completed)
+    ms13-delete-action-trash.md      # MS13 plan (completed)
   justfile                    # Task runner: build, test, lint, fmt, run, check, clean
   .gitignore                  # Ignores /target; Cargo.lock NOT ignored
   CLAUDE.md                   # Root AI context with file/directory guide
@@ -68,6 +75,8 @@ rustdirstat/
 ### Arena-Allocated Tree (rds-core/src/tree.rs)
 - `DirTree` = `Vec<FileNode>` with `usize` index references (not Rc/Box)
 - Insert-only: nodes never removed, indices stable for lifetime of tree
+- Delete via `tombstone()`: sets `deleted=true`, `size=0`, removes from parent's children; node remains in Vec
+- All stats/rendering code filters deleted nodes (`SubtreeStats`, `ExtensionStats`, `sorted_children`)
 - Cache-local traversal, zero reference-counting overhead
 - Root always at index 0
 
@@ -96,4 +105,8 @@ rustdirstat/
 | 7 | Extension Statistics Panel | Done |
 | 8 | Treemap Layout (Flat) | Done |
 | 9 | Treemap Cushion Shading | Done |
-| 10-21 | See docs/milestones.md | Pending |
+| 10 | Panel Synchronization | Done |
+| 11 | Incremental Scan Display | Done |
+| 12 | Duplicate Detection | Done |
+| 13 | Delete Action (Trash) | Done |
+| 14-21 | See docs/milestones.md | Pending |
