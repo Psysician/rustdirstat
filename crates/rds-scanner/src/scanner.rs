@@ -11,6 +11,14 @@ use rds_core::scan::{ScanConfig, ScanEvent, ScanStats};
 use rds_core::tree::FileNode;
 use tracing::{debug, warn};
 
+use crate::duplicate::DuplicateDetector;
+
+pub struct FileEntry {
+    pub path: PathBuf,
+    pub arena_index: usize,
+    pub size: u64,
+}
+
 /// Filesystem scanner using jwalk parallel traversal. Spawn via [`Scanner::scan`].
 pub struct Scanner;
 
@@ -167,6 +175,7 @@ fn emit_node(
     tx: &Sender<ScanEvent>,
     path_to_index: &mut HashMap<PathBuf, usize>,
     acc: &mut WalkAccum,
+    file_entries: &mut Vec<FileEntry>,
 ) -> Result<(), ()> {
     let node = match entry_to_node(entry) {
         Ok(n) => n,
@@ -200,7 +209,14 @@ fn emit_node(
         acc.total_bytes += size;
     }
 
-    path_to_index.insert(entry_path, acc.node_count);
+    path_to_index.insert(entry_path.clone(), acc.node_count);
+    if !is_dir && !entry.file_type().is_symlink() {
+        file_entries.push(FileEntry {
+            path: entry_path,
+            arena_index: acc.node_count,
+            size,
+        });
+    }
     acc.node_count += 1;
     Ok(())
 }
@@ -251,6 +267,8 @@ impl Scanner {
                 node_count: 1,
             };
 
+            let mut file_entries = Vec::new();
+
             Self::walk_entries(
                 &config,
                 &tx,
@@ -258,7 +276,12 @@ impl Scanner {
                 &max_nodes_reached,
                 &mut path_to_index,
                 &mut acc,
+                &mut file_entries,
             );
+
+            if config.hash_duplicates && !cancel.load(Ordering::Relaxed) {
+                DuplicateDetector::find_duplicates(&file_entries, &tx, &cancel);
+            }
 
             debug!(
                 files = acc.total_files,
@@ -320,6 +343,7 @@ impl Scanner {
         max_nodes_reached: &Arc<AtomicBool>,
         path_to_index: &mut HashMap<PathBuf, usize>,
         acc: &mut WalkAccum,
+        file_entries: &mut Vec<FileEntry>,
     ) {
         // Clone Arc handles for move into process_read_dir closure (ref: DL-002).
         let cancel_flag = Arc::clone(cancel);
@@ -385,7 +409,17 @@ impl Scanner {
                 }
             };
 
-            if emit_node(&entry, entry_path, parent_idx, tx, path_to_index, acc).is_err() {
+            if emit_node(
+                &entry,
+                entry_path,
+                parent_idx,
+                tx,
+                path_to_index,
+                acc,
+                file_entries,
+            )
+            .is_err()
+            {
                 return;
             }
 

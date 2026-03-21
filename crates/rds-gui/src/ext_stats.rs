@@ -68,10 +68,8 @@ pub(crate) fn show(
             continue;
         }
         let w = segment_width.min(remaining);
-        let segment = egui::Rect::from_min_size(
-            egui::pos2(x, bar_rect.top()),
-            egui::vec2(w, bar_height),
-        );
+        let segment =
+            egui::Rect::from_min_size(egui::pos2(x, bar_rect.top()), egui::vec2(w, bar_height));
         let color = hsl_to_color32(&stat.color);
         ui.painter().rect_filled(segment, 0.0, color);
 
@@ -86,8 +84,7 @@ pub(crate) fn show(
             super::format_bytes(stat.total_bytes),
             stat.percentage,
         );
-        let segment_response =
-            ui.allocate_rect(segment, egui::Sense::click());
+        let segment_response = ui.allocate_rect(segment, egui::Sense::click());
         let segment_response = segment_response.on_hover_text(&hover_text);
         if segment_response.clicked() {
             let ext = stat.extension.clone();
@@ -121,15 +118,10 @@ pub(crate) fn show(
                 // Data rows.
                 for stat in ext_stats {
                     // Color swatch: 12x12 painted rectangle.
-                    let (swatch_rect, _) = ui.allocate_exact_size(
-                        egui::vec2(12.0, 12.0),
-                        egui::Sense::hover(),
-                    );
-                    ui.painter().rect_filled(
-                        swatch_rect,
-                        2.0,
-                        hsl_to_color32(&stat.color),
-                    );
+                    let (swatch_rect, _) =
+                        ui.allocate_exact_size(egui::vec2(12.0, 12.0), egui::Sense::hover());
+                    ui.painter()
+                        .rect_filled(swatch_rect, 2.0, hsl_to_color32(&stat.color));
 
                     // Extension name. (ref: DL-007)
                     let display_name = if stat.extension.is_empty() {
@@ -168,55 +160,91 @@ mod tests {
 
     #[test]
     fn hsl_pure_red() {
-        let color = hsl_to_color32(&HslColor { h: 0.0, s: 1.0, l: 0.5 });
+        let color = hsl_to_color32(&HslColor {
+            h: 0.0,
+            s: 1.0,
+            l: 0.5,
+        });
         assert_eq!(color, egui::Color32::from_rgb(255, 0, 0));
     }
 
     #[test]
     fn hsl_pure_green() {
-        let color = hsl_to_color32(&HslColor { h: 120.0, s: 1.0, l: 0.5 });
+        let color = hsl_to_color32(&HslColor {
+            h: 120.0,
+            s: 1.0,
+            l: 0.5,
+        });
         assert_eq!(color, egui::Color32::from_rgb(0, 255, 0));
     }
 
     #[test]
     fn hsl_pure_blue() {
-        let color = hsl_to_color32(&HslColor { h: 240.0, s: 1.0, l: 0.5 });
+        let color = hsl_to_color32(&HslColor {
+            h: 240.0,
+            s: 1.0,
+            l: 0.5,
+        });
         assert_eq!(color, egui::Color32::from_rgb(0, 0, 255));
     }
 
     #[test]
     fn hsl_desaturated_gray() {
-        let color = hsl_to_color32(&HslColor { h: 0.0, s: 0.0, l: 0.5 });
+        let color = hsl_to_color32(&HslColor {
+            h: 0.0,
+            s: 0.0,
+            l: 0.5,
+        });
         assert_eq!(color, egui::Color32::from_rgb(128, 128, 128));
     }
 
     #[test]
     fn hsl_black() {
-        let color = hsl_to_color32(&HslColor { h: 0.0, s: 0.0, l: 0.0 });
+        let color = hsl_to_color32(&HslColor {
+            h: 0.0,
+            s: 0.0,
+            l: 0.0,
+        });
         assert_eq!(color, egui::Color32::from_rgb(0, 0, 0));
     }
 
     #[test]
     fn hsl_white() {
-        let color = hsl_to_color32(&HslColor { h: 0.0, s: 0.0, l: 1.0 });
+        let color = hsl_to_color32(&HslColor {
+            h: 0.0,
+            s: 0.0,
+            l: 1.0,
+        });
         assert_eq!(color, egui::Color32::from_rgb(255, 255, 255));
     }
 
     #[test]
     fn hsl_yellow_sector() {
-        let color = hsl_to_color32(&HslColor { h: 60.0, s: 1.0, l: 0.5 });
+        let color = hsl_to_color32(&HslColor {
+            h: 60.0,
+            s: 1.0,
+            l: 0.5,
+        });
         assert_eq!(color, egui::Color32::from_rgb(255, 255, 0));
     }
 
     #[test]
     fn hsl_cyan_sector() {
-        let color = hsl_to_color32(&HslColor { h: 180.0, s: 1.0, l: 0.5 });
+        let color = hsl_to_color32(&HslColor {
+            h: 180.0,
+            s: 1.0,
+            l: 0.5,
+        });
         assert_eq!(color, egui::Color32::from_rgb(0, 255, 255));
     }
 
     #[test]
     fn hsl_magenta_sector() {
-        let color = hsl_to_color32(&HslColor { h: 300.0, s: 1.0, l: 0.5 });
+        let color = hsl_to_color32(&HslColor {
+            h: 300.0,
+            s: 1.0,
+            l: 0.5,
+        });
         assert_eq!(color, egui::Color32::from_rgb(255, 0, 255));
     }
 

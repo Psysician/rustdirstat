@@ -193,8 +193,14 @@ impl TreemapLayout {
                 h: size.y,
             };
             compute_recursive(
-                tree, stats, root_index, bounds,
-                CushionCoeffs::default(), INITIAL_HEIGHT, 0, &mut rects,
+                tree,
+                stats,
+                root_index,
+                bounds,
+                CushionCoeffs::default(),
+                INITIAL_HEIGHT,
+                0,
+                &mut rects,
             );
         }
         TreemapLayout {
@@ -229,7 +235,12 @@ fn compute_recursive(
                 Some(LayoutItem {
                     size,
                     node_index: idx,
-                    rect: streemap::Rect { x: 0.0, y: 0.0, w: 0.0, h: 0.0 },
+                    rect: streemap::Rect {
+                        x: 0.0,
+                        y: 0.0,
+                        w: 0.0,
+                        h: 0.0,
+                    },
                 })
             } else {
                 None
@@ -241,7 +252,11 @@ fn compute_recursive(
         return;
     }
 
-    items.sort_by(|a, b| b.size.partial_cmp(&a.size).unwrap_or(std::cmp::Ordering::Equal));
+    items.sort_by(|a, b| {
+        b.size
+            .partial_cmp(&a.size)
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
 
     streemap::squarify(
         bounds,
@@ -262,14 +277,18 @@ fn compute_recursive(
 
         if node.is_dir {
             compute_recursive(
-                tree, stats, item.node_index, item.rect,
-                child_cushion, height * HEIGHT_FACTOR, depth + 1, result,
+                tree,
+                stats,
+                item.node_index,
+                item.rect,
+                child_cushion,
+                height * HEIGHT_FACTOR,
+                depth + 1,
+                result,
             );
         } else {
             let ext = node.extension.as_deref().unwrap_or("");
-            let color = ext_stats::hsl_to_color32(
-                &rds_core::stats::color_for_extension(ext),
-            );
+            let color = ext_stats::hsl_to_color32(&rds_core::stats::color_for_extension(ext));
             result.push(TreemapRect {
                 node_index: item.node_index,
                 rect: egui::Rect::from_min_size(
@@ -342,10 +361,7 @@ pub(crate) fn show(
     treemap_root: &mut usize,
     ui: &mut egui::Ui,
 ) {
-    let (response, painter) = ui.allocate_painter(
-        layout.last_size,
-        egui::Sense::click(),
-    );
+    let (response, painter) = ui.allocate_painter(layout.last_size, egui::Sense::click());
     let offset = response.rect.min.to_vec2();
 
     // Helper: dim a color to 30% brightness when extension filter is active
@@ -429,15 +445,10 @@ pub(crate) fn show(
     {
         let path = tree.path(idx);
         #[allow(deprecated)]
-        egui::show_tooltip_at_pointer(
-            ui.ctx(),
-            ui.layer_id(),
-            response.id.with("tip"),
-            |ui| {
-                ui.label(path.display().to_string());
-                ui.label(crate::format_bytes(node.size));
-            },
-        );
+        egui::show_tooltip_at_pointer(ui.ctx(), ui.layer_id(), response.id.with("tip"), |ui| {
+            ui.label(path.display().to_string());
+            ui.label(crate::format_bytes(node.size));
+        });
     }
 
     // Click to select node.
@@ -521,11 +532,15 @@ mod tests {
         let stats = SubtreeStats::compute(&tree);
         let layout = TreemapLayout::compute(&tree, &stats, egui::vec2(800.0, 600.0), tree.root());
         assert_eq!(layout.rects.len(), 2);
-        let area_big = layout.rects.iter()
+        let area_big = layout
+            .rects
+            .iter()
             .find(|r| r.node_index == 1)
             .map(|r| r.rect.width() * r.rect.height())
             .unwrap();
-        let area_small = layout.rects.iter()
+        let area_small = layout
+            .rects
+            .iter()
             .find(|r| r.node_index == 2)
             .map(|r| r.rect.width() * r.rect.height())
             .unwrap();
@@ -572,9 +587,7 @@ mod tests {
         tree.insert(0, make_file("a.rs", 1000, Some("rs")));
         let stats = SubtreeStats::compute(&tree);
         let layout = TreemapLayout::compute(&tree, &stats, egui::vec2(800.0, 600.0), tree.root());
-        let expected = ext_stats::hsl_to_color32(
-            &rds_core::stats::color_for_extension("rs"),
-        );
+        let expected = ext_stats::hsl_to_color32(&rds_core::stats::color_for_extension("rs"));
         assert_eq!(layout.rects[0].color, expected);
     }
 
@@ -584,9 +597,7 @@ mod tests {
         tree.insert(0, make_file("Makefile", 1000, None));
         let stats = SubtreeStats::compute(&tree);
         let layout = TreemapLayout::compute(&tree, &stats, egui::vec2(800.0, 600.0), tree.root());
-        let expected = ext_stats::hsl_to_color32(
-            &rds_core::stats::color_for_extension(""),
-        );
+        let expected = ext_stats::hsl_to_color32(&rds_core::stats::color_for_extension(""));
         assert_eq!(layout.rects[0].color, expected);
     }
 
@@ -644,7 +655,12 @@ mod tests {
     fn cushion_add_ridge_coefficients() {
         let mut c = CushionCoeffs::default();
         c.add_ridge(
-            &streemap::Rect { x: 0.0, y: 0.0, w: 100.0, h: 50.0 },
+            &streemap::Rect {
+                x: 0.0,
+                y: 0.0,
+                w: 100.0,
+                h: 50.0,
+            },
             40.0,
         );
         assert!((c.a2x - (-0.016)).abs() < 1e-6);
@@ -657,12 +673,22 @@ mod tests {
     fn cushion_ridges_accumulate() {
         let mut c = CushionCoeffs::default();
         c.add_ridge(
-            &streemap::Rect { x: 0.0, y: 0.0, w: 200.0, h: 100.0 },
+            &streemap::Rect {
+                x: 0.0,
+                y: 0.0,
+                w: 200.0,
+                h: 100.0,
+            },
             40.0,
         );
         let a2x_after_first = c.a2x;
         c.add_ridge(
-            &streemap::Rect { x: 0.0, y: 0.0, w: 100.0, h: 50.0 },
+            &streemap::Rect {
+                x: 0.0,
+                y: 0.0,
+                w: 100.0,
+                h: 50.0,
+            },
             20.0,
         );
         assert!(c.a2x < a2x_after_first);
@@ -672,7 +698,12 @@ mod tests {
     fn cushion_intensity_center_is_bright() {
         let mut c = CushionCoeffs::default();
         c.add_ridge(
-            &streemap::Rect { x: 0.0, y: 0.0, w: 100.0, h: 100.0 },
+            &streemap::Rect {
+                x: 0.0,
+                y: 0.0,
+                w: 100.0,
+                h: 100.0,
+            },
             40.0,
         );
         let center = c.intensity(50.0, 50.0);
@@ -683,7 +714,12 @@ mod tests {
     fn cushion_intensity_upper_left_brighter_than_lower_right() {
         let mut c = CushionCoeffs::default();
         c.add_ridge(
-            &streemap::Rect { x: 0.0, y: 0.0, w: 100.0, h: 100.0 },
+            &streemap::Rect {
+                x: 0.0,
+                y: 0.0,
+                w: 100.0,
+                h: 100.0,
+            },
             40.0,
         );
         let upper_left = c.intensity(10.0, 10.0);
@@ -698,11 +734,21 @@ mod tests {
     fn cushion_intensity_always_in_range() {
         let mut c = CushionCoeffs::default();
         c.add_ridge(
-            &streemap::Rect { x: 0.0, y: 0.0, w: 100.0, h: 100.0 },
+            &streemap::Rect {
+                x: 0.0,
+                y: 0.0,
+                w: 100.0,
+                h: 100.0,
+            },
             40.0,
         );
         c.add_ridge(
-            &streemap::Rect { x: 0.0, y: 0.0, w: 50.0, h: 50.0 },
+            &streemap::Rect {
+                x: 0.0,
+                y: 0.0,
+                w: 50.0,
+                h: 50.0,
+            },
             20.0,
         );
         for row in 0..=10 {
@@ -837,7 +883,12 @@ mod tests {
     fn build_mesh_vertex_and_index_counts() {
         let mut c = CushionCoeffs::default();
         c.add_ridge(
-            &streemap::Rect { x: 10.0, y: 10.0, w: 100.0, h: 100.0 },
+            &streemap::Rect {
+                x: 10.0,
+                y: 10.0,
+                w: 100.0,
+                h: 100.0,
+            },
             40.0,
         );
         let rel_rect = egui::Rect::from_min_size(egui::pos2(10.0, 10.0), egui::vec2(100.0, 100.0));
@@ -859,7 +910,12 @@ mod tests {
     fn build_mesh_vertices_within_bounds() {
         let mut c = CushionCoeffs::default();
         c.add_ridge(
-            &streemap::Rect { x: 20.0, y: 30.0, w: 80.0, h: 60.0 },
+            &streemap::Rect {
+                x: 20.0,
+                y: 30.0,
+                w: 80.0,
+                h: 60.0,
+            },
             40.0,
         );
         let rel_rect = egui::Rect::from_min_size(egui::pos2(20.0, 30.0), egui::vec2(80.0, 60.0));
@@ -872,10 +928,13 @@ mod tests {
         let abs_rect = rel_rect.shrink(0.5).translate(offset);
         for v in &mesh.vertices {
             assert!(
-                v.pos.x >= abs_rect.left() - 0.01 && v.pos.x <= abs_rect.right() + 0.01
-                    && v.pos.y >= abs_rect.top() - 0.01 && v.pos.y <= abs_rect.bottom() + 0.01,
+                v.pos.x >= abs_rect.left() - 0.01
+                    && v.pos.x <= abs_rect.right() + 0.01
+                    && v.pos.y >= abs_rect.top() - 0.01
+                    && v.pos.y <= abs_rect.bottom() + 0.01,
                 "vertex {:?} outside bounds {:?}",
-                v.pos, abs_rect,
+                v.pos,
+                abs_rect,
             );
         }
     }
@@ -884,7 +943,12 @@ mod tests {
     fn build_mesh_colors_vary() {
         let mut c = CushionCoeffs::default();
         c.add_ridge(
-            &streemap::Rect { x: 0.0, y: 0.0, w: 100.0, h: 100.0 },
+            &streemap::Rect {
+                x: 0.0,
+                y: 0.0,
+                w: 100.0,
+                h: 100.0,
+            },
             40.0,
         );
         let rel_rect = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(100.0, 100.0));
@@ -895,14 +959,22 @@ mod tests {
 
         let first_color = mesh.vertices[0].color;
         let has_different = mesh.vertices.iter().any(|v| v.color != first_color);
-        assert!(has_different, "all vertices have same color — no cushion effect");
+        assert!(
+            has_different,
+            "all vertices have same color — no cushion effect"
+        );
     }
 
     #[test]
     fn build_mesh_accumulates_into_existing() {
         let mut c = CushionCoeffs::default();
         c.add_ridge(
-            &streemap::Rect { x: 0.0, y: 0.0, w: 50.0, h: 50.0 },
+            &streemap::Rect {
+                x: 0.0,
+                y: 0.0,
+                w: 50.0,
+                h: 50.0,
+            },
             40.0,
         );
         let rel = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(50.0, 50.0));
@@ -912,8 +984,17 @@ mod tests {
         build_cushion_mesh(&mut mesh, rel, egui::Vec2::ZERO, &c, base);
         let first_count = mesh.vertices.len();
 
-        build_cushion_mesh(&mut mesh, rel.translate(egui::vec2(60.0, 0.0)), egui::Vec2::ZERO, &c, base);
-        assert!(mesh.vertices.len() > first_count, "second call should add more vertices");
+        build_cushion_mesh(
+            &mut mesh,
+            rel.translate(egui::vec2(60.0, 0.0)),
+            egui::Vec2::ZERO,
+            &c,
+            base,
+        );
+        assert!(
+            mesh.vertices.len() > first_count,
+            "second call should add more vertices"
+        );
     }
 
     #[test]
@@ -923,11 +1004,10 @@ mod tests {
         for d in 0..100 {
             let dir = tree.insert(0, make_dir(&format!("dir_{d}")));
             for f in 0..500 {
-                tree.insert(dir, make_file(
-                    &format!("file_{f}.rs"),
-                    (f as u64 + 1) * 100,
-                    Some("rs"),
-                ));
+                tree.insert(
+                    dir,
+                    make_file(&format!("file_{f}.rs"), (f as u64 + 1) * 100, Some("rs")),
+                );
             }
         }
         let stats = SubtreeStats::compute(&tree);
