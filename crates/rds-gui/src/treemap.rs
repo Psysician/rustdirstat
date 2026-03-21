@@ -19,12 +19,10 @@ const MIN_CUSHION_DIM: f32 = 4.0;
 
 /// Initial ridge height at depth 0. Produces visible gradients even
 /// on large rectangles. (ref: DL-009)
-#[allow(dead_code)] // Used in compute_recursive (Task 2)
 const INITIAL_HEIGHT: f32 = 40.0;
 
 /// Per-depth height reduction factor. Each nesting level halves the
 /// ridge height: 40 → 20 → 10 → 5 → ... (ref: DL-009)
-#[allow(dead_code)] // Used in compute_recursive (Task 2)
 const HEIGHT_FACTOR: f32 = 0.5;
 
 /// Ambient intensity floor. Prevents fully black edges. (ref: DL-007)
@@ -42,7 +40,6 @@ const LIGHT_Z: f32 = 0.816_496_6;
 
 /// Accumulated parabolic ridge coefficients for cushion shading.
 #[derive(Clone, Copy, Default, Debug)]
-#[allow(dead_code)] // Used in Task 2/3
 pub(crate) struct CushionCoeffs {
     pub a2x: f32,
     pub a1x: f32,
@@ -50,7 +47,6 @@ pub(crate) struct CushionCoeffs {
     pub a1y: f32,
 }
 
-#[allow(dead_code)] // Methods used in Task 3/4
 impl CushionCoeffs {
     fn add_ridge(&mut self, rect: &streemap::Rect<f32>, height: f32) {
         let dx = rect.w;
@@ -69,6 +65,7 @@ impl CushionCoeffs {
         }
     }
 
+    #[allow(dead_code)] // Used in intensity() via tests now; wired in Task 3/4
     fn intensity(&self, x: f32, y: f32) -> f32 {
         let dhdx = 2.0 * self.a2x * x + self.a1x;
         let dhdy = 2.0 * self.a2y * y + self.a1y;
@@ -111,6 +108,12 @@ pub(crate) struct TreemapRect {
     pub rect: egui::Rect,
     /// Fill color derived from file extension.
     pub color: egui::Color32,
+    /// Nesting depth (0 = direct child of root).
+    #[allow(dead_code)] // Read in Task 3/4 for cushion shading
+    pub depth: u32,
+    /// Accumulated cushion surface coefficients for shading.
+    #[allow(dead_code)] // Read in Task 3/4 for cushion shading
+    pub cushion: CushionCoeffs,
 }
 
 /// Intermediate item used during squarify layout.
@@ -136,7 +139,10 @@ impl TreemapLayout {
                 w: size.x,
                 h: size.y,
             };
-            compute_recursive(tree, stats, tree.root(), bounds, &mut rects);
+            compute_recursive(
+                tree, stats, tree.root(), bounds,
+                CushionCoeffs::default(), INITIAL_HEIGHT, 0, &mut rects,
+            );
         }
         TreemapLayout {
             rects,
@@ -145,11 +151,15 @@ impl TreemapLayout {
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn compute_recursive(
     tree: &DirTree,
     stats: &SubtreeStats,
     dir_index: usize,
     bounds: streemap::Rect<f32>,
+    parent_cushion: CushionCoeffs,
+    height: f32,
+    depth: u32,
     result: &mut Vec<TreemapRect>,
 ) {
     if bounds.w < MIN_RECT_DIM || bounds.h < MIN_RECT_DIM {
@@ -192,8 +202,15 @@ fn compute_recursive(
             None => continue,
         };
 
+        // Add this child's rectangle as a ridge at current height. (ref: DL-001)
+        let mut child_cushion = parent_cushion;
+        child_cushion.add_ridge(&item.rect, height);
+
         if node.is_dir {
-            compute_recursive(tree, stats, item.node_index, item.rect, result);
+            compute_recursive(
+                tree, stats, item.node_index, item.rect,
+                child_cushion, height * HEIGHT_FACTOR, depth + 1, result,
+            );
         } else {
             let ext = node.extension.as_deref().unwrap_or("");
             let color = ext_stats::hsl_to_color32(
@@ -206,6 +223,8 @@ fn compute_recursive(
                     egui::vec2(item.rect.w, item.rect.h),
                 ),
                 color,
+                depth,
+                cushion: child_cushion,
             });
         }
     }
@@ -588,5 +607,72 @@ mod tests {
     #[test]
     fn grid_subdivisions_uses_min_dimension() {
         assert_eq!(grid_subdivisions(100.0, 10.0), 2);
+    }
+
+    #[test]
+    fn layout_tracks_depth() {
+        let mut tree = DirTree::new("/root");
+        tree.insert(0, make_file("top.rs", 500, Some("rs")));
+        let sub = tree.insert(0, make_dir("sub"));
+        tree.insert(sub, make_file("deep.rs", 500, Some("rs")));
+        let stats = SubtreeStats::compute(&tree);
+        let layout = TreemapLayout::compute(&tree, &stats, egui::vec2(200.0, 100.0));
+
+        assert_eq!(layout.rects.len(), 2);
+        let top = layout.rects.iter().find(|r| r.node_index == 1).unwrap();
+        let deep = layout.rects.iter().find(|r| r.node_index == 3).unwrap();
+        assert_eq!(top.depth, 0);
+        assert_eq!(deep.depth, 1);
+    }
+
+    #[test]
+    fn layout_deeply_nested_depth() {
+        let mut tree = DirTree::new("/root");
+        let d1 = tree.insert(0, make_dir("d1"));
+        let d2 = tree.insert(d1, make_dir("d2"));
+        let d3 = tree.insert(d2, make_dir("d3"));
+        tree.insert(d3, make_file("deep.rs", 500, Some("rs")));
+        tree.insert(0, make_file("top.rs", 500, Some("rs")));
+        let stats = SubtreeStats::compute(&tree);
+        let layout = TreemapLayout::compute(&tree, &stats, egui::vec2(200.0, 100.0));
+
+        let deep = layout.rects.iter().find(|r| r.node_index == 4).unwrap();
+        let top = layout.rects.iter().find(|r| r.node_index == 5).unwrap();
+        assert_eq!(deep.depth, 3);
+        assert_eq!(top.depth, 0);
+    }
+
+    #[test]
+    fn layout_cushion_accumulates_across_levels() {
+        let mut tree = DirTree::new("/root");
+        let sub = tree.insert(0, make_dir("sub"));
+        tree.insert(sub, make_file("deep.rs", 1000, Some("rs")));
+        tree.insert(0, make_file("top.rs", 1000, Some("rs")));
+        let stats = SubtreeStats::compute(&tree);
+        let layout = TreemapLayout::compute(&tree, &stats, egui::vec2(200.0, 100.0));
+
+        let top = layout.rects.iter().find(|r| r.node_index == 3).unwrap();
+        let deep = layout.rects.iter().find(|r| r.node_index == 2).unwrap();
+
+        let top_mag = top.cushion.a2x.abs() + top.cushion.a2y.abs();
+        let deep_mag = deep.cushion.a2x.abs() + deep.cushion.a2y.abs();
+        assert!(
+            deep_mag > top_mag,
+            "nested file ({deep_mag}) should have more accumulated cushion than top-level ({top_mag})",
+        );
+    }
+
+    #[test]
+    fn layout_cushion_coefficients_nonzero() {
+        let mut tree = DirTree::new("/root");
+        tree.insert(0, make_file("a.rs", 1000, Some("rs")));
+        let stats = SubtreeStats::compute(&tree);
+        let layout = TreemapLayout::compute(&tree, &stats, egui::vec2(100.0, 100.0));
+
+        let r = &layout.rects[0];
+        assert!(r.cushion.a2x != 0.0, "a2x should be non-zero");
+        assert!(r.cushion.a1x != 0.0, "a1x should be non-zero");
+        assert!(r.cushion.a2y != 0.0, "a2y should be non-zero");
+        assert!(r.cushion.a1y != 0.0, "a1y should be non-zero");
     }
 }
