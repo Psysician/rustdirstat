@@ -397,16 +397,29 @@ impl RustDirStatApp {
                 self.extension_stats = None;
                 self.treemap_layout = None;
 
-                // Clear selection if it pointed at the deleted node.
-                if self.selected_node == Some(pending.node_index) {
+                // Clear selection if it pointed at a now-deleted node (the target
+                // or any of its descendants).
+                if let Some(sel) = self.selected_node
+                    && self
+                        .tree
+                        .as_ref()
+                        .unwrap()
+                        .get(sel)
+                        .is_some_and(|n| n.deleted)
+                {
                     self.selected_node = None;
                 }
 
-                // Reset treemap root if it pointed at the deleted node.
-                if let Some(ref tree) = self.tree
-                    && self.treemap_root == pending.node_index
+                // Reset treemap root if it pointed at a now-deleted node (e.g.,
+                // user drilled into a subdirectory that was then deleted).
+                if self
+                    .tree
+                    .as_ref()
+                    .unwrap()
+                    .get(self.treemap_root)
+                    .is_some_and(|n| n.deleted)
                 {
-                    self.treemap_root = tree.root();
+                    self.treemap_root = self.tree.as_ref().unwrap().root();
                 }
 
                 actions::cleanup_duplicate_groups(
@@ -418,6 +431,9 @@ impl RustDirStatApp {
             }
             Err(msg) => {
                 self.delete_error = Some(msg);
+                // Restore pending_delete so the dialog stays open and shows
+                // the error message instead of silently disappearing.
+                self.pending_delete = Some(pending);
             }
         }
     }
