@@ -465,27 +465,34 @@ pub(crate) fn show(
         *selected = hovered_index;
     }
 
-    // Context menu for selected node (only when scan is complete and not root).
+    // Context menu for selected node (only when scan is complete).
     // Guard attachment so right-clicking empty space doesn't show an empty popup.
-    if scan_complete && selected.is_some_and(|idx| idx != tree.root()) {
+    if scan_complete && selected.is_some() {
         response.context_menu(|ui| {
-            if let Some(sel_idx) = *selected
-                && ui.button("Delete").clicked()
-            {
-                let node = tree.get(sel_idx).unwrap();
-                let path = tree.path(sel_idx);
-                let size = if node.is_dir {
-                    tree.subtree_size(sel_idx)
-                } else {
-                    node.size
-                };
-                *pending_delete = Some(PendingDelete {
-                    node_index: sel_idx,
-                    path_display: path.display().to_string(),
-                    size_bytes: size,
-                    is_dir: node.is_dir,
-                });
-                ui.close();
+            if let Some(sel_idx) = *selected {
+                if ui.button("Open in File Manager").clicked() {
+                    let _ = crate::actions::open_in_file_manager(tree, sel_idx);
+                    ui.close();
+                }
+                if sel_idx != tree.root() {
+                    ui.separator();
+                    if ui.button("Delete").clicked() {
+                        let node = tree.get(sel_idx).unwrap();
+                        let path = tree.path(sel_idx);
+                        let size = if node.is_dir {
+                            tree.subtree_size(sel_idx)
+                        } else {
+                            node.size
+                        };
+                        *pending_delete = Some(PendingDelete {
+                            node_index: sel_idx,
+                            path_display: path.display().to_string(),
+                            size_bytes: size,
+                            is_dir: node.is_dir,
+                        });
+                        ui.close();
+                    }
+                }
             }
         });
     }
