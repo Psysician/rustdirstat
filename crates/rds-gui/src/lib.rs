@@ -1,8 +1,8 @@
 //! egui application shell with directory picker, scan progress, tree view,
-//! and extension statistics.
+//! treemap, and extension statistics.
 //!
 //! `RustDirStatApp` owns scan state and renders a 3-panel layout: directory
-//! tree (MS6), treemap placeholder (MS8), and extension statistics (MS7).
+//! tree (MS6), treemap (MS8), and extension statistics (MS7).
 //! The scanner runs on a background thread; events are drained via
 //! `try_recv()` each frame (bounded to 100 events to avoid blocking
 //! rendering). (ref: DL-003, DL-006)
@@ -61,6 +61,9 @@ pub struct RustDirStatApp {
     selected_node: Option<usize>,
     /// Cached subtree sizes and file counts, computed after scan completes.
     subtree_stats: Option<tree_view::SubtreeStats>,
+    /// Cached treemap layout, computed after scan completes. Recomputed
+    /// when the central panel resizes. (ref: DL-005)
+    treemap_layout: Option<treemap::TreemapLayout>,
 }
 
 impl Default for RustDirStatApp {
@@ -92,6 +95,7 @@ impl RustDirStatApp {
             tree_view_state: tree_view::TreeViewState::new(),
             selected_node: None,
             subtree_stats: None,
+            treemap_layout: None,
         }
     }
 
@@ -130,6 +134,7 @@ impl RustDirStatApp {
         self.tree_view_state.reset();
         self.selected_node = None;
         self.subtree_stats = None;
+        self.treemap_layout = None;
         self.path_error = None;
         self.phase = ScanPhase::Scanning;
         self.scan_path = Some(path.clone());
@@ -394,14 +399,39 @@ impl eframe::App for RustDirStatApp {
                 }
             });
 
-        // --- Central panel: treemap placeholder (MS8) ---
+        // --- Central panel: treemap (MS8) ---
         egui::CentralPanel::default().show(ctx, |ui| {
-            ui.heading("Treemap");
-            ui.separator();
-            ui.colored_label(
-                egui::Color32::GRAY,
-                "Implemented in MS8.",
-            );
+            if let (Some(tree), Some(stats)) =
+                (self.tree.as_ref(), self.subtree_stats.as_ref())
+            {
+                // Recompute layout if panel size changed or layout not yet computed.
+                // (ref: DL-005)
+                let available_size = ui.available_size();
+                let needs_recompute = self.treemap_layout.as_ref().is_none_or(|l| {
+                    (l.last_size.x - available_size.x).abs() > 1.0
+                        || (l.last_size.y - available_size.y).abs() > 1.0
+                });
+
+                if needs_recompute {
+                    self.treemap_layout =
+                        Some(treemap::TreemapLayout::compute(tree, stats, available_size));
+                }
+
+                if let Some(layout) = self.treemap_layout.as_ref() {
+                    treemap::show(layout, tree, &mut self.selected_node, ui);
+                }
+            } else {
+                ui.heading("Treemap");
+                ui.separator();
+                if matches!(self.phase, ScanPhase::Scanning) {
+                    ui.colored_label(
+                        egui::Color32::GRAY,
+                        "Scan in progress\u{2026}",
+                    );
+                } else {
+                    ui.colored_label(egui::Color32::GRAY, "No scan data.");
+                }
+            }
         });
     }
 }
@@ -424,6 +454,7 @@ mod tests {
         assert!(app.extension_stats.is_none());
         assert!(app.selected_node.is_none());
         assert!(app.subtree_stats.is_none());
+        assert!(app.treemap_layout.is_none());
         assert!(app.path_error.is_none());
         assert!(app.scan_path.is_none());
         assert!(app.path_input.is_empty());

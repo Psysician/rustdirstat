@@ -5,10 +5,6 @@
 //! produce output rects. Colors come from `ext_stats::hsl_to_color32` via
 //! `rds_core::stats::color_for_extension`.
 
-// Items are pub(crate) for consumption by the treemap panel;
-// suppress dead_code until the show function is wired into lib.rs (Task 3).
-#![allow(dead_code)]
-
 use crate::ext_stats;
 use crate::tree_view::SubtreeStats;
 use rds_core::tree::DirTree;
