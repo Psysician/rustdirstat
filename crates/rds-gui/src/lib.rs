@@ -605,6 +605,9 @@ impl eframe::App for RustDirStatApp {
                     if self.scan_errors > 0 {
                         text.push_str(&format!(" ({} errors)", self.scan_errors));
                     }
+                    if self.freed_bytes > 0 {
+                        text.push_str(&format!(" | {} freed", format_bytes(self.freed_bytes)));
+                    }
                     ui.label(text);
                 }
             }
