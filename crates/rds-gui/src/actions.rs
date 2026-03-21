@@ -47,3 +47,156 @@ pub(crate) fn cleanup_duplicate_groups(groups: &mut Vec<DuplicateGroup>, tree: &
     groups.retain(|g| g.node_indices.len() >= 2);
     groups.sort_by(|a, b| b.wasted_bytes.cmp(&a.wasted_bytes));
 }
+
+/// Opens the file manager for the filesystem entry at `index`.
+///
+/// For directories, opens the directory directly. For files, uses
+/// platform-specific commands to reveal (select) the file in its parent
+/// directory.
+#[allow(dead_code)] // Wired up in tasks 3-5 (tree view, treemap, duplicates context menus)
+pub(crate) fn open_in_file_manager(tree: &DirTree, index: usize) -> Result<(), String> {
+    let path = tree.path(index);
+    let node = tree
+        .get(index)
+        .ok_or_else(|| format!("node at index {index} not found"))?;
+
+    let result = if node.is_dir {
+        open::that_detached(&path).map_err(|e| e.to_string())
+    } else {
+        open_file_revealing(&path)
+    };
+
+    match &result {
+        Ok(()) => tracing::debug!("opened in file manager: {}", path.display()),
+        Err(e) => tracing::warn!("failed to open in file manager: {}: {e}", path.display()),
+    }
+
+    result
+}
+
+/// Platform-specific file reveal: selects the file in the native file manager.
+#[allow(dead_code)] // Called by open_in_file_manager
+fn open_file_revealing(path: &std::path::Path) -> Result<(), String> {
+    #[cfg(target_os = "windows")]
+    {
+        std::process::Command::new("explorer")
+            .arg(format!("/select,{}", path.display()))
+            .spawn()
+            .map_err(|e| e.to_string())?;
+        Ok(())
+    }
+
+    #[cfg(target_os = "macos")]
+    {
+        std::process::Command::new("open")
+            .arg("-R")
+            .arg(path)
+            .spawn()
+            .map_err(|e| e.to_string())?;
+        Ok(())
+    }
+
+    #[cfg(not(any(target_os = "windows", target_os = "macos")))]
+    {
+        let target = path.parent().unwrap_or(path);
+        open::that_detached(target).map_err(|e| e.to_string())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use rds_core::tree::FileNode;
+
+    fn make_file_node(name: &str, size: u64) -> FileNode {
+        FileNode {
+            name: name.to_string(),
+            size,
+            is_dir: false,
+            children: Vec::new(),
+            parent: None,
+            extension: None,
+            modified: None,
+            deleted: false,
+        }
+    }
+
+    fn make_dir_node(name: &str) -> FileNode {
+        FileNode {
+            name: name.to_string(),
+            size: 0,
+            is_dir: true,
+            children: Vec::new(),
+            parent: None,
+            extension: None,
+            modified: None,
+            deleted: false,
+        }
+    }
+
+    #[test]
+    #[ignore]
+    fn open_file_in_file_manager() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let root_path = tmp.path();
+        let subdir_path = root_path.join("subdir");
+        std::fs::create_dir(&subdir_path).unwrap();
+        let file_path = subdir_path.join("test.txt");
+        std::fs::write(&file_path, "hello").unwrap();
+
+        let mut tree = DirTree::new(root_path.to_str().unwrap());
+        let subdir_idx = tree.insert(0, make_dir_node("subdir"));
+        let file_idx = tree.insert(subdir_idx, make_file_node("test.txt", 5));
+
+        let result = open_in_file_manager(&tree, file_idx);
+        assert!(result.is_ok(), "open file failed: {:?}", result.err());
+    }
+
+    #[test]
+    #[ignore]
+    fn open_directory_in_file_manager() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let root_path = tmp.path();
+        let subdir_path = root_path.join("subdir");
+        std::fs::create_dir(&subdir_path).unwrap();
+        let file_path = subdir_path.join("test.txt");
+        std::fs::write(&file_path, "hello").unwrap();
+
+        let mut tree = DirTree::new(root_path.to_str().unwrap());
+        let subdir_idx = tree.insert(0, make_dir_node("subdir"));
+        tree.insert(subdir_idx, make_file_node("test.txt", 5));
+
+        let result = open_in_file_manager(&tree, subdir_idx);
+        assert!(result.is_ok(), "open dir failed: {:?}", result.err());
+    }
+
+    #[test]
+    #[ignore]
+    fn open_root_in_file_manager() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let root_path = tmp.path();
+        let subdir_path = root_path.join("subdir");
+        std::fs::create_dir(&subdir_path).unwrap();
+        let file_path = subdir_path.join("test.txt");
+        std::fs::write(&file_path, "hello").unwrap();
+
+        let mut tree = DirTree::new(root_path.to_str().unwrap());
+        let subdir_idx = tree.insert(0, make_dir_node("subdir"));
+        tree.insert(subdir_idx, make_file_node("test.txt", 5));
+
+        let result = open_in_file_manager(&tree, 0);
+        assert!(result.is_ok(), "open root failed: {:?}", result.err());
+    }
+
+    #[test]
+    fn open_nonexistent_path_returns_result() {
+        let mut tree = DirTree::new("/nonexistent/path/that/does/not/exist");
+        let file_idx = tree.insert(0, make_file_node("ghost.txt", 42));
+
+        let result = open_in_file_manager(&tree, file_idx);
+        // The function should not panic. On Linux, xdg-open may not fail
+        // immediately for nonexistent paths, so we just verify the function
+        // compiles, doesn't panic, and returns a Result.
+        let _ = result;
+    }
+}
