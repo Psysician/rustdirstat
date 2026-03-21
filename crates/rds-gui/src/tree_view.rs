@@ -65,17 +65,26 @@ impl SubtreeStats {
 /// Expand/collapse state for the directory tree panel.
 pub(crate) struct TreeViewState {
     expanded: HashSet<usize>,
+    /// Tracks the last selection value synced from external sources (e.g., treemap click).
+    /// Used to detect when selection changed externally. (ref: DL-003)
+    last_synced_selection: Option<usize>,
+    /// When true, the next render of the selected node calls `scroll_to_me`. (ref: DL-003)
+    pending_scroll: bool,
 }
 
 impl TreeViewState {
     pub fn new() -> Self {
         Self {
             expanded: HashSet::new(),
+            last_synced_selection: None,
+            pending_scroll: false,
         }
     }
 
     pub fn reset(&mut self) {
         self.expanded.clear();
+        self.last_synced_selection = None;
+        self.pending_scroll = false;
     }
 
     pub fn toggle(&mut self, index: usize) {
@@ -100,6 +109,22 @@ pub(crate) fn sorted_children(tree: &DirTree, index: usize, stats: &SubtreeStats
     children
 }
 
+/// Expands all ancestor directories of `index` so the node becomes visible
+/// in the tree view. Walks from `index` up to the root via parent pointers,
+/// expanding each parent. Idempotent — already-expanded nodes stay expanded.
+/// (ref: DL-004)
+fn expand_ancestors(tree: &DirTree, state: &mut TreeViewState, index: usize) {
+    let mut current = index;
+    while let Some(node) = tree.get(current) {
+        if let Some(parent) = node.parent {
+            state.expand(parent);
+            current = parent;
+        } else {
+            break;
+        }
+    }
+}
+
 /// Renders the directory tree inside a scrollable area.
 pub(crate) fn show(
     tree: &DirTree,
@@ -108,6 +133,16 @@ pub(crate) fn show(
     selected: &mut Option<usize>,
     ui: &mut egui::Ui,
 ) {
+    // Detect external selection change (e.g., treemap click).
+    // Expand ancestors and queue scroll so the selected node becomes visible. (ref: DL-003)
+    if *selected != state.last_synced_selection {
+        if let Some(idx) = *selected {
+            expand_ancestors(tree, state, idx);
+            state.pending_scroll = true;
+        }
+        state.last_synced_selection = *selected;
+    }
+
     egui::ScrollArea::vertical().show(ui, |ui| {
         render_node(tree, tree.root(), stats, state, selected, ui, 0);
     });
@@ -172,6 +207,14 @@ fn render_node(
         let response = ui.selectable_label(is_selected, &label_text);
         if response.clicked() {
             *selected = Some(index);
+            // Update sync tracker immediately so show() doesn't treat this as
+            // an external change on the next frame. (ref: DL-004)
+            state.last_synced_selection = Some(index);
+        }
+        // Scroll to the selected node when selection changed externally.
+        if is_selected && state.pending_scroll {
+            response.scroll_to_me(Some(egui::Align::Center));
+            state.pending_scroll = false;
         }
     });
 
@@ -331,5 +374,57 @@ mod tests {
         let stats = SubtreeStats::compute(&tree);
         let sorted = sorted_children(&tree, 0, &stats);
         assert!(sorted.is_empty());
+    }
+
+    #[test]
+    fn expand_ancestors_deep_node() {
+        let mut tree = DirTree::new("/root");
+        let d1 = tree.insert(0, make_dir("d1"));
+        let d2 = tree.insert(d1, make_dir("d2"));
+        let d3 = tree.insert(d2, make_dir("d3"));
+        let file = tree.insert(d3, make_file("deep.txt", 100));
+
+        let mut state = TreeViewState::new();
+        expand_ancestors(&tree, &mut state, file);
+
+        assert!(state.is_expanded(0));   // root
+        assert!(state.is_expanded(d1));  // d1
+        assert!(state.is_expanded(d2));  // d2
+        assert!(state.is_expanded(d3));  // d3
+    }
+
+    #[test]
+    fn expand_ancestors_root_is_noop() {
+        let tree = DirTree::new("/root");
+        let mut state = TreeViewState::new();
+        expand_ancestors(&tree, &mut state, 0);
+        // Root has no parent — nothing to expand.
+        assert!(!state.is_expanded(0));
+    }
+
+    #[test]
+    fn expand_ancestors_direct_child_of_root() {
+        let mut tree = DirTree::new("/root");
+        let file = tree.insert(0, make_file("a.txt", 100));
+
+        let mut state = TreeViewState::new();
+        expand_ancestors(&tree, &mut state, file);
+
+        // Only root should be expanded (parent of the file).
+        assert!(state.is_expanded(0));
+    }
+
+    #[test]
+    fn expand_ancestors_idempotent() {
+        let mut tree = DirTree::new("/root");
+        let d1 = tree.insert(0, make_dir("d1"));
+        let file = tree.insert(d1, make_file("a.txt", 100));
+
+        let mut state = TreeViewState::new();
+        expand_ancestors(&tree, &mut state, file);
+        expand_ancestors(&tree, &mut state, file);
+
+        assert!(state.is_expanded(0));
+        assert!(state.is_expanded(d1));
     }
 }
