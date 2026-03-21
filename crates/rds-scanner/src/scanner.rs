@@ -175,7 +175,7 @@ fn emit_node(
     tx: &Sender<ScanEvent>,
     path_to_index: &mut HashMap<PathBuf, usize>,
     acc: &mut WalkAccum,
-    file_entries: &mut Vec<FileEntry>,
+    mut file_entries: Option<&mut Vec<FileEntry>>,
 ) -> Result<(), ()> {
     let node = match entry_to_node(entry) {
         Ok(n) => n,
@@ -209,14 +209,17 @@ fn emit_node(
         acc.total_bytes += size;
     }
 
-    path_to_index.insert(entry_path.clone(), acc.node_count);
-    if !is_dir && !entry.file_type().is_symlink() {
-        file_entries.push(FileEntry {
-            path: entry_path,
+    if let Some(ref mut entries) = file_entries
+        && !is_dir
+        && !entry.file_type().is_symlink()
+    {
+        entries.push(FileEntry {
+            path: entry_path.clone(),
             arena_index: acc.node_count,
             size,
         });
     }
+    path_to_index.insert(entry_path, acc.node_count);
     acc.node_count += 1;
     Ok(())
 }
@@ -267,7 +270,11 @@ impl Scanner {
                 node_count: 1,
             };
 
-            let mut file_entries = Vec::new();
+            let mut file_entries = if config.hash_duplicates {
+                Some(Vec::new())
+            } else {
+                None
+            };
 
             Self::walk_entries(
                 &config,
@@ -279,8 +286,13 @@ impl Scanner {
                 &mut file_entries,
             );
 
-            if config.hash_duplicates && !cancel.load(Ordering::Relaxed) {
-                DuplicateDetector::find_duplicates(&file_entries, &tx, &cancel);
+            if let Some(ref entries) = file_entries
+                && !cancel.load(Ordering::Relaxed)
+            {
+                let _ = tx.send(ScanEvent::DuplicateDetectionStarted {
+                    file_count: entries.len() as u64,
+                });
+                DuplicateDetector::find_duplicates(entries, &tx, &cancel);
             }
 
             debug!(
@@ -343,7 +355,7 @@ impl Scanner {
         max_nodes_reached: &Arc<AtomicBool>,
         path_to_index: &mut HashMap<PathBuf, usize>,
         acc: &mut WalkAccum,
-        file_entries: &mut Vec<FileEntry>,
+        file_entries: &mut Option<Vec<FileEntry>>,
     ) {
         // Clone Arc handles for move into process_read_dir closure (ref: DL-002).
         let cancel_flag = Arc::clone(cancel);
@@ -416,7 +428,7 @@ impl Scanner {
                 tx,
                 path_to_index,
                 acc,
-                file_entries,
+                file_entries.as_mut(),
             )
             .is_err()
             {

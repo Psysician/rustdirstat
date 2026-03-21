@@ -27,6 +27,4 @@
 mod duplicate;
 mod scanner;
 
-pub use duplicate::DuplicateDetector;
-pub use scanner::FileEntry;
 pub use scanner::Scanner;

@@ -8,12 +8,20 @@ use rds_core::tree::DirTree;
 use rds_scanner::Scanner;
 use tempfile::TempDir;
 
-fn build_tree_and_duplicates(
-    rx: crossbeam_channel::Receiver<ScanEvent>,
-) -> (DirTree, ScanStats, Vec<([u8; 32], Vec<usize>)>) {
+struct ScanResult {
+    #[allow(dead_code)]
+    tree: DirTree,
+    #[allow(dead_code)]
+    stats: ScanStats,
+    duplicates: Vec<([u8; 32], Vec<usize>)>,
+    detection_started: bool,
+}
+
+fn build_tree_and_duplicates(rx: crossbeam_channel::Receiver<ScanEvent>) -> ScanResult {
     let mut tree: Option<DirTree> = None;
     let mut stats: Option<ScanStats> = None;
     let mut duplicates: Vec<([u8; 32], Vec<usize>)> = Vec::new();
+    let mut detection_started = false;
 
     for event in rx.iter() {
         match event {
@@ -33,16 +41,20 @@ fn build_tree_and_duplicates(
             ScanEvent::DuplicateFound { hash, node_indices } => {
                 duplicates.push((hash, node_indices));
             }
+            ScanEvent::DuplicateDetectionStarted { .. } => {
+                detection_started = true;
+            }
             ScanEvent::ScanError { .. } => {}
             ScanEvent::Progress { .. } => {}
         }
     }
 
-    (
-        tree.expect("expected at least one NodeDiscovered event"),
-        stats.expect("expected ScanComplete event"),
+    ScanResult {
+        tree: tree.expect("expected at least one NodeDiscovered event"),
+        stats: stats.expect("expected ScanComplete event"),
         duplicates,
-    )
+        detection_started,
+    }
 }
 
 fn make_dup_config(root: std::path::PathBuf) -> ScanConfig {
@@ -71,11 +83,19 @@ fn exact_duplicates() {
     let handle = Scanner::scan(config, tx, cancel);
     handle.join().unwrap();
 
-    let (_tree, _stats, duplicates) = build_tree_and_duplicates(rx);
+    let result = build_tree_and_duplicates(rx);
 
-    assert_eq!(duplicates.len(), 1, "expected exactly one duplicate group");
+    assert!(
+        result.detection_started,
+        "DuplicateDetectionStarted must be sent"
+    );
+    assert_eq!(
+        result.duplicates.len(),
+        1,
+        "expected exactly one duplicate group"
+    );
 
-    let (hash, ref indices) = duplicates[0];
+    let (hash, ref indices) = result.duplicates[0];
     assert_eq!(indices.len(), 3, "expected 3 files in the duplicate group");
 
     let expected_hash: [u8; 32] = {
@@ -106,11 +126,16 @@ fn no_duplicates() {
     let handle = Scanner::scan(config, tx, cancel);
     handle.join().unwrap();
 
-    let (_tree, _stats, duplicates) = build_tree_and_duplicates(rx);
+    let result = build_tree_and_duplicates(rx);
 
     assert!(
-        duplicates.is_empty(),
-        "expected no duplicates for unique files, got {duplicates:?}"
+        result.detection_started,
+        "DuplicateDetectionStarted must be sent"
+    );
+    assert!(
+        result.duplicates.is_empty(),
+        "expected no duplicates for unique files, got {:?}",
+        result.duplicates
     );
 }
 
@@ -130,11 +155,12 @@ fn same_size_different_content() {
     let handle = Scanner::scan(config, tx, cancel);
     handle.join().unwrap();
 
-    let (_tree, _stats, duplicates) = build_tree_and_duplicates(rx);
+    let result = build_tree_and_duplicates(rx);
 
     assert!(
-        duplicates.is_empty(),
-        "same-size files with different content must not produce duplicates, got {duplicates:?}"
+        result.duplicates.is_empty(),
+        "same-size files with different content must not produce duplicates, got {:?}",
+        result.duplicates
     );
 }
 
@@ -158,15 +184,16 @@ fn multiple_groups() {
     let handle = Scanner::scan(config, tx, cancel);
     handle.join().unwrap();
 
-    let (_tree, _stats, duplicates) = build_tree_and_duplicates(rx);
+    let result = build_tree_and_duplicates(rx);
 
     assert_eq!(
-        duplicates.len(),
+        result.duplicates.len(),
         2,
-        "expected exactly two duplicate groups, got {duplicates:?}"
+        "expected exactly two duplicate groups, got {:?}",
+        result.duplicates
     );
 
-    for (_, indices) in &duplicates {
+    for (_, indices) in &result.duplicates {
         assert_eq!(
             indices.len(),
             2,
@@ -196,10 +223,14 @@ fn hash_duplicates_disabled() {
     let handle = Scanner::scan(config, tx, cancel);
     handle.join().unwrap();
 
-    let (_tree, _stats, duplicates) = build_tree_and_duplicates(rx);
+    let result = build_tree_and_duplicates(rx);
 
     assert!(
-        duplicates.is_empty(),
+        !result.detection_started,
+        "DuplicateDetectionStarted must not be sent when hash_duplicates is false"
+    );
+    assert!(
+        result.duplicates.is_empty(),
         "no DuplicateFound events should be emitted when hash_duplicates is false"
     );
 }
@@ -230,6 +261,7 @@ fn cancel_during_detection() {
 
     let mut node_count = 0;
     let mut got_complete = false;
+    let mut dup_count = 0;
     for event in rx.iter() {
         match event {
             ScanEvent::NodeDiscovered { .. } => {
@@ -242,6 +274,9 @@ fn cancel_during_detection() {
                 got_complete = true;
                 break;
             }
+            ScanEvent::DuplicateFound { .. } => {
+                dup_count += 1;
+            }
             _ => {}
         }
     }
@@ -250,6 +285,49 @@ fn cancel_during_detection() {
     assert!(
         got_complete,
         "ScanComplete must be sent even on cancellation"
+    );
+    // Cancellation should prevent most or all duplicate groups from being emitted.
+    // Without cancellation, 50 dirs x 10 identical files would produce many groups.
+    assert!(
+        dup_count < 50,
+        "cancellation should suppress most duplicate groups, got {dup_count}"
+    );
+}
+
+#[test]
+fn large_files_exercise_full_hash() {
+    let tmp = TempDir::new().unwrap();
+    let root = tmp.path();
+
+    // Files larger than 4KB to exercise partial -> full hash pipeline.
+    let content: Vec<u8> = (0u8..=255).cycle().take(8192).collect();
+    fs::write(root.join("large_a.bin"), &content).unwrap();
+    fs::write(root.join("large_b.bin"), &content).unwrap();
+
+    // Same size, different content past 4KB boundary.
+    let mut different = content.clone();
+    different[5000] ^= 0xFF;
+    fs::write(root.join("large_c.bin"), &different).unwrap();
+
+    let (tx, rx) = bounded(4096);
+    let cancel = Arc::new(AtomicBool::new(false));
+    let config = make_dup_config(root.to_path_buf());
+
+    let handle = Scanner::scan(config, tx, cancel);
+    handle.join().unwrap();
+
+    let result = build_tree_and_duplicates(rx);
+
+    assert_eq!(
+        result.duplicates.len(),
+        1,
+        "expected one duplicate group (large_a + large_b), got {:?}",
+        result.duplicates
+    );
+    assert_eq!(
+        result.duplicates[0].1.len(),
+        2,
+        "expected 2 files in the duplicate group"
     );
 }
 
@@ -270,10 +348,11 @@ fn zero_byte_files() {
     let handle = Scanner::scan(config, tx, cancel);
     handle.join().unwrap();
 
-    let (_tree, _stats, duplicates) = build_tree_and_duplicates(rx);
+    let result = build_tree_and_duplicates(rx);
 
     assert!(
-        duplicates.is_empty(),
-        "zero-byte files must not produce DuplicateFound events (DL-013), got {duplicates:?}"
+        result.duplicates.is_empty(),
+        "zero-byte files must not produce DuplicateFound events (DL-013), got {:?}",
+        result.duplicates
     );
 }
