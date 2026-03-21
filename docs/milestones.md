@@ -72,7 +72,7 @@ Implement `TreemapRenderer` with flat colored rectangles (no cushion shading yet
 
 ---
 
-## MS9 — Treemap Cushion Shading
+## ~~MS9 — Treemap Cushion Shading~~ DONE
 
 Add cushion shading to treemap renderer. Implement cushion function `I(x,y)` with per-vertex color mesh via `Shape::Mesh`. Depth-based intensity. Fallback to flat for rectangles <4px. Performance test with 50k+ rectangles.
 
@@ -80,7 +80,7 @@ Add cushion shading to treemap renderer. Implement cushion function `I(x,y)` wit
 
 ---
 
-## MS10 — Panel Synchronization
+## ~~MS10 — Panel Synchronization~~ DONE
 
 Wire up cross-panel selection: click in tree view highlights in treemap and ext stats. Click treemap rectangle selects in tree view. Click extension in stats highlights all matching files in treemap. Double-click treemap to drill into subdirectory, breadcrumb to navigate back.
 

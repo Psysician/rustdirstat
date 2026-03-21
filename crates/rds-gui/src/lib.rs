@@ -64,6 +64,12 @@ pub struct RustDirStatApp {
     /// Cached treemap layout, computed after scan completes. Recomputed
     /// when the central panel resizes. (ref: DL-005)
     treemap_layout: Option<treemap::TreemapLayout>,
+    /// Extension filter: when set, treemap dims files not matching this extension.
+    /// Set by clicking in ext stats panel, independent of `selected_node`. (ref: DL-001)
+    selected_extension: Option<String>,
+    /// Root node index for treemap drill-down. Defaults to `tree.root()` (0).
+    /// Changed by double-click in treemap, navigated via breadcrumb. (ref: DL-006)
+    treemap_root: usize,
 }
 
 impl Default for RustDirStatApp {
@@ -96,6 +102,8 @@ impl RustDirStatApp {
             selected_node: None,
             subtree_stats: None,
             treemap_layout: None,
+            selected_extension: None,
+            treemap_root: 0,
         }
     }
 
@@ -135,6 +143,8 @@ impl RustDirStatApp {
         self.selected_node = None;
         self.subtree_stats = None;
         self.treemap_layout = None;
+        self.selected_extension = None;
+        self.treemap_root = 0;
         self.path_error = None;
         self.phase = ScanPhase::Scanning;
         self.scan_path = Some(path.clone());
@@ -387,7 +397,7 @@ impl eframe::App for RustDirStatApp {
                 ui.separator();
                 match &self.extension_stats {
                     Some(stats) => {
-                        ext_stats::show(stats, ui);
+                        ext_stats::show(stats, &mut self.selected_extension, ui);
                     }
                     None => {
                         if self.tree.is_some() {
@@ -399,26 +409,62 @@ impl eframe::App for RustDirStatApp {
                 }
             });
 
-        // --- Central panel: treemap (MS8) ---
+        // --- Central panel: treemap (MS8) + breadcrumb (MS10) ---
         egui::CentralPanel::default().show(ctx, |ui| {
             if let (Some(tree), Some(stats)) =
                 (self.tree.as_ref(), self.subtree_stats.as_ref())
             {
-                // Recompute layout if panel size changed or layout not yet computed.
-                // (ref: DL-005)
+                // Breadcrumb navigation — only visible when drilled in. (ref: DL-007)
+                if self.treemap_root != tree.root() {
+                    ui.horizontal(|ui| {
+                        let chain = treemap::breadcrumb_chain(tree, self.treemap_root);
+                        for (i, (idx, name)) in chain.iter().enumerate() {
+                            if i > 0 {
+                                ui.label("\u{203A}"); // › separator
+                            }
+                            if *idx == self.treemap_root {
+                                // Current directory: non-clickable label.
+                                ui.strong(name);
+                            } else if ui.link(name).clicked() {
+                                self.treemap_root = *idx;
+                                self.treemap_layout = None;
+                            }
+                        }
+                    });
+                    ui.separator();
+                }
+
+                // Recompute layout if panel size or root changed. (ref: MS8 DL-005, MS10 DL-009)
                 let available_size = ui.available_size();
                 let needs_recompute = self.treemap_layout.as_ref().is_none_or(|l| {
-                    (l.last_size.x - available_size.x).abs() > 1.0
+                    l.last_root != self.treemap_root
+                        || (l.last_size.x - available_size.x).abs() > 1.0
                         || (l.last_size.y - available_size.y).abs() > 1.0
                 });
 
                 if needs_recompute {
-                    self.treemap_layout =
-                        Some(treemap::TreemapLayout::compute(tree, stats, available_size));
+                    self.treemap_layout = Some(treemap::TreemapLayout::compute(
+                        tree,
+                        stats,
+                        available_size,
+                        self.treemap_root,
+                    ));
                 }
 
                 if let Some(layout) = self.treemap_layout.as_ref() {
-                    treemap::show(layout, tree, &mut self.selected_node, ui);
+                    let prev_root = self.treemap_root;
+                    treemap::show(
+                        layout,
+                        tree,
+                        &mut self.selected_node,
+                        &self.selected_extension,
+                        &mut self.treemap_root,
+                        ui,
+                    );
+                    // Invalidate layout if drill-down changed the root.
+                    if self.treemap_root != prev_root {
+                        self.treemap_layout = None;
+                    }
                 }
             } else {
                 ui.heading("Treemap");
@@ -455,6 +501,8 @@ mod tests {
         assert!(app.selected_node.is_none());
         assert!(app.subtree_stats.is_none());
         assert!(app.treemap_layout.is_none());
+        assert!(app.selected_extension.is_none());
+        assert_eq!(app.treemap_root, 0);
         assert!(app.path_error.is_none());
         assert!(app.scan_path.is_none());
         assert!(app.path_input.is_empty());
