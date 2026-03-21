@@ -82,20 +82,22 @@ fn open_file_revealing(path: &std::path::Path) -> Result<(), String> {
         // `/select,"<path>"` token exactly as intended, even when the path
         // contains spaces, commas, or cmd metacharacters like `&` or `%`.
         use std::os::windows::process::CommandExt;
-        std::process::Command::new("explorer")
+        let child = std::process::Command::new("explorer")
             .raw_arg(format!("/select,\"{}\"", path.display()))
             .spawn()
             .map_err(|e| e.to_string())?;
+        std::thread::spawn(move || { let _ = child.wait(); });
         Ok(())
     }
 
     #[cfg(target_os = "macos")]
     {
-        std::process::Command::new("open")
+        let child = std::process::Command::new("open")
             .arg("-R")
             .arg(path)
             .spawn()
             .map_err(|e| e.to_string())?;
+        std::thread::spawn(move || { let _ = child.wait(); });
         Ok(())
     }
 
