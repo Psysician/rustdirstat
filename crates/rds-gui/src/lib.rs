@@ -424,7 +424,7 @@ impl eframe::App for RustDirStatApp {
 
                 if needs_recompute {
                     self.treemap_layout =
-                        Some(treemap::TreemapLayout::compute(tree, stats, available_size));
+                        Some(treemap::TreemapLayout::compute(tree, stats, available_size, tree.root()));
                 }
 
                 if let Some(layout) = self.treemap_layout.as_ref() {

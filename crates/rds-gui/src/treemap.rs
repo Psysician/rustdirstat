@@ -172,10 +172,19 @@ struct LayoutItem {
 pub(crate) struct TreemapLayout {
     pub rects: Vec<TreemapRect>,
     pub last_size: egui::Vec2,
+    /// Root node used for this layout computation. Used for cache invalidation
+    /// when treemap_root changes via drill-down. (ref: DL-009)
+    #[allow(dead_code)] // Read in tests; will be used for drill-down wiring (MS10 Task 6)
+    pub last_root: usize,
 }
 
 impl TreemapLayout {
-    pub fn compute(tree: &DirTree, stats: &SubtreeStats, size: egui::Vec2) -> Self {
+    pub fn compute(
+        tree: &DirTree,
+        stats: &SubtreeStats,
+        size: egui::Vec2,
+        root_index: usize,
+    ) -> Self {
         let mut rects = Vec::new();
         if size.x > 0.0 && size.y > 0.0 {
             let bounds = streemap::Rect {
@@ -185,13 +194,14 @@ impl TreemapLayout {
                 h: size.y,
             };
             compute_recursive(
-                tree, stats, tree.root(), bounds,
+                tree, stats, root_index, bounds,
                 CushionCoeffs::default(), INITIAL_HEIGHT, 0, &mut rects,
             );
         }
         TreemapLayout {
             rects,
             last_size: size,
+            last_root: root_index,
         }
     }
 }
@@ -273,6 +283,52 @@ fn compute_recursive(
             });
         }
     }
+}
+
+/// Finds the directory to drill into when the user double-clicks a file.
+///
+/// Walks from `file_idx` up toward `current_root` to find the direct child
+/// of `current_root` that is an ancestor of the file. Returns `Some(dir_index)`
+/// if that child is a directory (drill target), or `None` if the file is a
+/// direct child of the current root (nothing deeper to drill into). (ref: DL-005)
+#[allow(dead_code)] // Used in tests; will be called from double-click handler (MS10 Task 6)
+pub(crate) fn find_drill_target(
+    tree: &DirTree,
+    file_idx: usize,
+    current_root: usize,
+) -> Option<usize> {
+    let mut current = file_idx;
+    loop {
+        let node = tree.get(current)?;
+        let parent = node.parent?;
+        if parent == current_root {
+            if tree.get(current)?.is_dir {
+                return Some(current);
+            } else {
+                return None;
+            }
+        }
+        current = parent;
+    }
+}
+
+/// Builds the ancestor chain from the tree root down to `treemap_root`.
+///
+/// Returns a list of `(node_index, node_name)` pairs ordered from root to
+/// `treemap_root`. Used for rendering the breadcrumb navigation bar. (ref: DL-007)
+#[allow(dead_code)] // Used in tests; will be called from breadcrumb UI (MS10 Task 6)
+pub(crate) fn breadcrumb_chain(tree: &DirTree, treemap_root: usize) -> Vec<(usize, String)> {
+    let mut chain = Vec::new();
+    let mut current = treemap_root;
+    while let Some(node) = tree.get(current) {
+        chain.push((current, node.name.clone()));
+        match node.parent {
+            Some(parent) => current = parent,
+            None => break,
+        }
+    }
+    chain.reverse();
+    chain
 }
 
 /// Renders the cached treemap layout with cushion shading, hover tooltips,
@@ -426,7 +482,7 @@ mod tests {
         let mut tree = DirTree::new("/root");
         tree.insert(0, make_file("a.rs", 1000, Some("rs")));
         let stats = SubtreeStats::compute(&tree);
-        let layout = TreemapLayout::compute(&tree, &stats, egui::vec2(800.0, 600.0));
+        let layout = TreemapLayout::compute(&tree, &stats, egui::vec2(800.0, 600.0), tree.root());
         assert_eq!(layout.rects.len(), 1);
         let r = &layout.rects[0];
         assert_eq!(r.node_index, 1);
@@ -441,7 +497,7 @@ mod tests {
         tree.insert(0, make_file("b.py", 300, Some("py")));
         tree.insert(0, make_file("c.js", 100, Some("js")));
         let stats = SubtreeStats::compute(&tree);
-        let layout = TreemapLayout::compute(&tree, &stats, egui::vec2(800.0, 600.0));
+        let layout = TreemapLayout::compute(&tree, &stats, egui::vec2(800.0, 600.0), tree.root());
         assert_eq!(layout.rects.len(), 3);
         for r in &layout.rects {
             assert!(r.rect.min.x >= 0.0);
@@ -457,7 +513,7 @@ mod tests {
         tree.insert(0, make_file("big.rs", 900, Some("rs")));
         tree.insert(0, make_file("small.py", 100, Some("py")));
         let stats = SubtreeStats::compute(&tree);
-        let layout = TreemapLayout::compute(&tree, &stats, egui::vec2(800.0, 600.0));
+        let layout = TreemapLayout::compute(&tree, &stats, egui::vec2(800.0, 600.0), tree.root());
         assert_eq!(layout.rects.len(), 2);
         let area_big = layout.rects.iter()
             .find(|r| r.node_index == 1)
@@ -477,7 +533,7 @@ mod tests {
         tree.insert(sub, make_file("a.rs", 500, Some("rs")));
         tree.insert(sub, make_file("b.rs", 500, Some("rs")));
         let stats = SubtreeStats::compute(&tree);
-        let layout = TreemapLayout::compute(&tree, &stats, egui::vec2(800.0, 600.0));
+        let layout = TreemapLayout::compute(&tree, &stats, egui::vec2(800.0, 600.0), tree.root());
         assert_eq!(layout.rects.len(), 2);
         // Both files should be present (directory itself is not a rect).
         let indices: Vec<usize> = layout.rects.iter().map(|r| r.node_index).collect();
@@ -491,7 +547,7 @@ mod tests {
         tree.insert(0, make_file("a.rs", 1000, Some("rs")));
         tree.insert(0, make_file("empty.rs", 0, Some("rs")));
         let stats = SubtreeStats::compute(&tree);
-        let layout = TreemapLayout::compute(&tree, &stats, egui::vec2(800.0, 600.0));
+        let layout = TreemapLayout::compute(&tree, &stats, egui::vec2(800.0, 600.0), tree.root());
         assert_eq!(layout.rects.len(), 1);
         assert_eq!(layout.rects[0].node_index, 1);
     }
@@ -500,7 +556,7 @@ mod tests {
     fn layout_empty_directory() {
         let tree = DirTree::new("/root");
         let stats = SubtreeStats::compute(&tree);
-        let layout = TreemapLayout::compute(&tree, &stats, egui::vec2(800.0, 600.0));
+        let layout = TreemapLayout::compute(&tree, &stats, egui::vec2(800.0, 600.0), tree.root());
         assert!(layout.rects.is_empty());
     }
 
@@ -509,7 +565,7 @@ mod tests {
         let mut tree = DirTree::new("/root");
         tree.insert(0, make_file("a.rs", 1000, Some("rs")));
         let stats = SubtreeStats::compute(&tree);
-        let layout = TreemapLayout::compute(&tree, &stats, egui::vec2(800.0, 600.0));
+        let layout = TreemapLayout::compute(&tree, &stats, egui::vec2(800.0, 600.0), tree.root());
         let expected = ext_stats::hsl_to_color32(
             &rds_core::stats::color_for_extension("rs"),
         );
@@ -521,7 +577,7 @@ mod tests {
         let mut tree = DirTree::new("/root");
         tree.insert(0, make_file("Makefile", 1000, None));
         let stats = SubtreeStats::compute(&tree);
-        let layout = TreemapLayout::compute(&tree, &stats, egui::vec2(800.0, 600.0));
+        let layout = TreemapLayout::compute(&tree, &stats, egui::vec2(800.0, 600.0), tree.root());
         let expected = ext_stats::hsl_to_color32(
             &rds_core::stats::color_for_extension(""),
         );
@@ -538,7 +594,7 @@ mod tests {
             );
         }
         let stats = SubtreeStats::compute(&tree);
-        let layout = TreemapLayout::compute(&tree, &stats, egui::vec2(800.0, 600.0));
+        let layout = TreemapLayout::compute(&tree, &stats, egui::vec2(800.0, 600.0), tree.root());
         for r in &layout.rects {
             assert!(r.rect.width() > 0.0, "zero-width rect at {:?}", r.rect);
             assert!(r.rect.height() > 0.0, "zero-height rect at {:?}", r.rect);
@@ -550,7 +606,7 @@ mod tests {
         let mut tree = DirTree::new("/root");
         tree.insert(0, make_file("a.rs", 1000, Some("rs")));
         let stats = SubtreeStats::compute(&tree);
-        let layout = TreemapLayout::compute(&tree, &stats, egui::vec2(0.0, 0.0));
+        let layout = TreemapLayout::compute(&tree, &stats, egui::vec2(0.0, 0.0), tree.root());
         assert!(layout.rects.is_empty());
     }
 
@@ -562,7 +618,7 @@ mod tests {
         let d3 = tree.insert(d2, make_dir("d3"));
         tree.insert(d3, make_file("deep.rs", 1000, Some("rs")));
         let stats = SubtreeStats::compute(&tree);
-        let layout = TreemapLayout::compute(&tree, &stats, egui::vec2(800.0, 600.0));
+        let layout = TreemapLayout::compute(&tree, &stats, egui::vec2(800.0, 600.0), tree.root());
         assert_eq!(layout.rects.len(), 1);
         assert_eq!(layout.rects[0].node_index, 4); // deep.rs is index 4
     }
@@ -572,7 +628,7 @@ mod tests {
         let tree = DirTree::new("/root");
         let stats = SubtreeStats::compute(&tree);
         let size = egui::vec2(1024.0, 768.0);
-        let layout = TreemapLayout::compute(&tree, &stats, size);
+        let layout = TreemapLayout::compute(&tree, &stats, size, tree.root());
         assert_eq!(layout.last_size, size);
     }
 
@@ -709,7 +765,7 @@ mod tests {
         let sub = tree.insert(0, make_dir("sub"));
         tree.insert(sub, make_file("deep.rs", 500, Some("rs")));
         let stats = SubtreeStats::compute(&tree);
-        let layout = TreemapLayout::compute(&tree, &stats, egui::vec2(200.0, 100.0));
+        let layout = TreemapLayout::compute(&tree, &stats, egui::vec2(200.0, 100.0), tree.root());
 
         assert_eq!(layout.rects.len(), 2);
         let top = layout.rects.iter().find(|r| r.node_index == 1).unwrap();
@@ -727,7 +783,7 @@ mod tests {
         tree.insert(d3, make_file("deep.rs", 500, Some("rs")));
         tree.insert(0, make_file("top.rs", 500, Some("rs")));
         let stats = SubtreeStats::compute(&tree);
-        let layout = TreemapLayout::compute(&tree, &stats, egui::vec2(200.0, 100.0));
+        let layout = TreemapLayout::compute(&tree, &stats, egui::vec2(200.0, 100.0), tree.root());
 
         let deep = layout.rects.iter().find(|r| r.node_index == 4).unwrap();
         let top = layout.rects.iter().find(|r| r.node_index == 5).unwrap();
@@ -742,7 +798,7 @@ mod tests {
         tree.insert(sub, make_file("deep.rs", 1000, Some("rs")));
         tree.insert(0, make_file("top.rs", 1000, Some("rs")));
         let stats = SubtreeStats::compute(&tree);
-        let layout = TreemapLayout::compute(&tree, &stats, egui::vec2(200.0, 100.0));
+        let layout = TreemapLayout::compute(&tree, &stats, egui::vec2(200.0, 100.0), tree.root());
 
         let top = layout.rects.iter().find(|r| r.node_index == 3).unwrap();
         let deep = layout.rects.iter().find(|r| r.node_index == 2).unwrap();
@@ -760,7 +816,7 @@ mod tests {
         let mut tree = DirTree::new("/root");
         tree.insert(0, make_file("a.rs", 1000, Some("rs")));
         let stats = SubtreeStats::compute(&tree);
-        let layout = TreemapLayout::compute(&tree, &stats, egui::vec2(100.0, 100.0));
+        let layout = TreemapLayout::compute(&tree, &stats, egui::vec2(100.0, 100.0), tree.root());
 
         let r = &layout.rects[0];
         assert!(r.cushion.a2x != 0.0, "a2x should be non-zero");
@@ -872,7 +928,7 @@ mod tests {
 
         // Time the layout computation (includes cushion coefficient accumulation).
         let start = std::time::Instant::now();
-        let layout = TreemapLayout::compute(&tree, &stats, egui::vec2(1920.0, 1080.0));
+        let layout = TreemapLayout::compute(&tree, &stats, egui::vec2(1920.0, 1080.0), tree.root());
         let layout_elapsed = start.elapsed();
 
         assert_eq!(layout.rects.len(), 50_000);
@@ -906,5 +962,92 @@ mod tests {
             mesh.vertices.len(),
             mesh.indices.len(),
         );
+    }
+
+    #[test]
+    fn layout_with_custom_root_shows_subtree_only() {
+        let mut tree = DirTree::new("/root");
+        let sub = tree.insert(0, make_dir("sub"));
+        tree.insert(sub, make_file("a.rs", 500, Some("rs")));
+        tree.insert(sub, make_file("b.rs", 300, Some("rs")));
+        tree.insert(0, make_file("top.txt", 200, Some("txt")));
+
+        let stats = SubtreeStats::compute(&tree);
+        let layout = TreemapLayout::compute(&tree, &stats, egui::vec2(800.0, 600.0), sub);
+
+        assert_eq!(layout.rects.len(), 2);
+        let indices: Vec<usize> = layout.rects.iter().map(|r| r.node_index).collect();
+        assert!(indices.contains(&2)); // a.rs
+        assert!(indices.contains(&3)); // b.rs
+        assert!(!indices.contains(&4)); // top.txt excluded
+        assert_eq!(layout.last_root, sub);
+    }
+
+    #[test]
+    fn layout_custom_root_stores_last_root() {
+        let mut tree = DirTree::new("/root");
+        let sub = tree.insert(0, make_dir("sub"));
+        tree.insert(sub, make_file("a.rs", 100, Some("rs")));
+        let stats = SubtreeStats::compute(&tree);
+        let layout = TreemapLayout::compute(&tree, &stats, egui::vec2(800.0, 600.0), sub);
+        assert_eq!(layout.last_root, sub);
+    }
+
+    #[test]
+    fn drill_target_file_inside_subdir() {
+        let mut tree = DirTree::new("/root");
+        let sub = tree.insert(0, make_dir("sub"));
+        let file = tree.insert(sub, make_file("a.rs", 100, Some("rs")));
+        assert_eq!(find_drill_target(&tree, file, 0), Some(sub));
+    }
+
+    #[test]
+    fn drill_target_file_at_top_level_returns_none() {
+        let mut tree = DirTree::new("/root");
+        let file = tree.insert(0, make_file("a.rs", 100, Some("rs")));
+        assert_eq!(find_drill_target(&tree, file, 0), None);
+    }
+
+    #[test]
+    fn drill_target_deeply_nested_file() {
+        let mut tree = DirTree::new("/root");
+        let d1 = tree.insert(0, make_dir("d1"));
+        let d2 = tree.insert(d1, make_dir("d2"));
+        let file = tree.insert(d2, make_file("deep.rs", 100, Some("rs")));
+        assert_eq!(find_drill_target(&tree, file, 0), Some(d1));
+        assert_eq!(find_drill_target(&tree, file, d1), Some(d2));
+        assert_eq!(find_drill_target(&tree, file, d2), None);
+    }
+
+    #[test]
+    fn breadcrumb_chain_at_root() {
+        let tree = DirTree::new("/root");
+        let chain = breadcrumb_chain(&tree, 0);
+        assert_eq!(chain.len(), 1);
+        assert_eq!(chain[0], (0, "/root".to_string()));
+    }
+
+    #[test]
+    fn breadcrumb_chain_one_level_deep() {
+        let mut tree = DirTree::new("/root");
+        let sub = tree.insert(0, make_dir("sub"));
+        let chain = breadcrumb_chain(&tree, sub);
+        assert_eq!(chain.len(), 2);
+        assert_eq!(chain[0], (0, "/root".to_string()));
+        assert_eq!(chain[1], (sub, "sub".to_string()));
+    }
+
+    #[test]
+    fn breadcrumb_chain_three_levels() {
+        let mut tree = DirTree::new("/root");
+        let d1 = tree.insert(0, make_dir("d1"));
+        let d2 = tree.insert(d1, make_dir("d2"));
+        let d3 = tree.insert(d2, make_dir("d3"));
+        let chain = breadcrumb_chain(&tree, d3);
+        assert_eq!(chain.len(), 4);
+        assert_eq!(chain[0], (0, "/root".to_string()));
+        assert_eq!(chain[1], (d1, "d1".to_string()));
+        assert_eq!(chain[2], (d2, "d2".to_string()));
+        assert_eq!(chain[3], (d3, "d3".to_string()));
     }
 }
