@@ -393,18 +393,39 @@ impl eframe::App for RustDirStatApp {
                     ui.label("Ready \u{2014} open a folder to begin scanning.");
                 }
                 ScanPhase::Scanning => {
-                    ui.horizontal(|ui| {
-                        ui.spinner();
-                        let mut text = format!(
-                            "Scanning\u{2026} {} files, {}",
+                    let elapsed_secs = self
+                        .scan_start
+                        .map(|t| t.elapsed().as_secs_f64())
+                        .unwrap_or(0.0);
+
+                    let mut text = if elapsed_secs < 0.01 {
+                        format!(
+                            "Scanning\u{2026} {} files \u{00B7} {} \u{00B7} {:.1}s \u{00B7} \u{2014} files/s \u{00B7} \u{2014}/s",
                             self.files_scanned,
                             format_bytes(self.bytes_scanned),
-                        );
-                        if self.scan_errors > 0 {
-                            text.push_str(&format!(" ({} errors)", self.scan_errors));
-                        }
-                        ui.label(text);
-                    });
+                            elapsed_secs,
+                        )
+                    } else {
+                        let files_per_sec = self.files_scanned as f64 / elapsed_secs;
+                        let bytes_per_sec = self.bytes_scanned as f64 / elapsed_secs;
+                        format!(
+                            "Scanning\u{2026} {} files \u{00B7} {} \u{00B7} {:.1}s \u{00B7} {:.0} files/s \u{00B7} {}/s",
+                            self.files_scanned,
+                            format_bytes(self.bytes_scanned),
+                            elapsed_secs,
+                            files_per_sec,
+                            format_bytes(bytes_per_sec as u64),
+                        )
+                    };
+                    if self.scan_errors > 0 {
+                        text.push_str(&format!(" ({} errors)", self.scan_errors));
+                    }
+
+                    let fraction = (elapsed_secs * 0.3 % 1.0) as f32;
+                    let bar = egui::ProgressBar::new(fraction)
+                        .animate(true)
+                        .text(text);
+                    ui.add(bar);
                 }
                 ScanPhase::Complete(stats) => {
                     let mut text = format!(
