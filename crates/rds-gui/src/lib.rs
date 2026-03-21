@@ -1,7 +1,8 @@
-//! egui application shell with directory picker, scan progress, and tree view.
+//! egui application shell with directory picker, scan progress, tree view,
+//! and extension statistics.
 //!
 //! `RustDirStatApp` owns scan state and renders a 3-panel layout: directory
-//! tree (MS6), treemap placeholder (MS8), and extension statistics placeholder (MS7).
+//! tree (MS6), treemap placeholder (MS8), and extension statistics (MS7).
 //! The scanner runs on a background thread; events are drained via
 //! `try_recv()` each frame (bounded to 100 events to avoid blocking
 //! rendering). (ref: DL-003, DL-006)
@@ -13,8 +14,10 @@ use std::thread::JoinHandle;
 
 use crossbeam_channel::Receiver;
 use rds_core::scan::{ScanConfig, ScanEvent, ScanStats};
+use rds_core::stats::ExtensionStats;
 use rds_core::tree::DirTree;
 
+mod ext_stats;
 mod tree_view;
 
 /// Scan lifecycle phases. (ref: DL-004)
@@ -49,6 +52,8 @@ pub struct RustDirStatApp {
     path_error: Option<String>,
     /// Running count of ScanError events received during the current scan.
     scan_errors: u64,
+    /// Cached per-extension statistics, computed after scan completes. (ref: DL-002)
+    extension_stats: Option<Vec<ExtensionStats>>,
     /// Expand/collapse state for directory tree panel.
     tree_view_state: tree_view::TreeViewState,
     /// Currently selected node index, shared across panels (MS10).
@@ -82,6 +87,7 @@ impl RustDirStatApp {
             path_input: String::new(),
             path_error: None,
             scan_errors: 0,
+            extension_stats: None,
             tree_view_state: tree_view::TreeViewState::new(),
             selected_node: None,
             subtree_stats: None,
@@ -119,6 +125,7 @@ impl RustDirStatApp {
         self.files_scanned = 0;
         self.bytes_scanned = 0;
         self.scan_errors = 0;
+        self.extension_stats = None;
         self.tree_view_state.reset();
         self.selected_node = None;
         self.subtree_stats = None;
@@ -148,6 +155,9 @@ impl RustDirStatApp {
     /// on a detached thread avoids GUI stutter from those deallocations.
     fn finish_scan(&mut self, stats: ScanStats) {
         self.phase = ScanPhase::Complete(stats);
+        if let Some(ref tree) = self.tree {
+            self.extension_stats = Some(rds_core::stats::compute_extension_stats(tree));
+        }
         self.receiver = None;
         self.cancel = None;
         if let Some(handle) = self.scan_handle.take() {
@@ -363,16 +373,24 @@ impl eframe::App for RustDirStatApp {
                 }
             });
 
-        // --- Right panel: extension statistics placeholder (MS7) ---
+        // --- Right panel: extension statistics (MS7) ---
         egui::SidePanel::right("ext_stats_panel")
-            .default_width(200.0)
+            .default_width(220.0)
             .show(ctx, |ui| {
                 ui.heading("Extensions");
                 ui.separator();
-                ui.colored_label(
-                    egui::Color32::GRAY,
-                    "Implemented in MS7.",
-                );
+                match &self.extension_stats {
+                    Some(stats) => {
+                        ext_stats::show(stats, ui);
+                    }
+                    None => {
+                        if self.tree.is_some() {
+                            ui.label(format!("{} files scanned", self.files_scanned));
+                        } else {
+                            ui.colored_label(egui::Color32::GRAY, "No scan data.");
+                        }
+                    }
+                }
             });
 
         // --- Central panel: treemap placeholder (MS8) ---
@@ -402,6 +420,7 @@ mod tests {
         assert_eq!(app.files_scanned, 0);
         assert_eq!(app.bytes_scanned, 0);
         assert_eq!(app.scan_errors, 0);
+        assert!(app.extension_stats.is_none());
         assert!(app.selected_node.is_none());
         assert!(app.subtree_stats.is_none());
         assert!(app.path_error.is_none());
