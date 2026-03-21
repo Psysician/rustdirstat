@@ -33,6 +33,10 @@ pub struct FileNode {
     pub extension: Option<String>,
     /// Last-modified time as a Unix timestamp (seconds), if available.
     pub modified: Option<u64>,
+    /// Tombstone flag. When `true`, this node has been logically deleted.
+    /// The node remains in the arena to preserve index stability.
+    #[serde(default)]
+    pub deleted: bool,
 }
 
 /// Arena-allocated file tree.
@@ -59,6 +63,7 @@ impl DirTree {
             parent: None,
             extension: None,
             modified: None,
+            deleted: false,
         };
         DirTree { nodes: vec![root] }
     }
@@ -70,6 +75,7 @@ impl DirTree {
     pub fn from_root(mut node: FileNode) -> Self {
         node.parent = None;
         node.children = Vec::new();
+        node.deleted = false;
         DirTree { nodes: vec![node] }
     }
 
@@ -158,6 +164,40 @@ impl DirTree {
     pub fn is_empty(&self) -> bool {
         self.nodes.is_empty()
     }
+
+    /// Logically deletes the node at `index` and all its descendants.
+    ///
+    /// For each visited node: sets `deleted = true` and `size = 0`.
+    /// If the tombstoned node has a parent, removes it from the parent's
+    /// `children` vec. Nodes remain in the arena to preserve index stability.
+    ///
+    /// Uses an iterative stack traversal matching the pattern in `subtree_size`.
+    /// Panics if `index` is out of bounds.
+    pub fn tombstone(&mut self, index: usize) {
+        assert!(index < self.nodes.len(), "index out of bounds");
+
+        // Collect all descendant indices via stack-based DFS.
+        // We read children before mutating, so collect first.
+        let mut to_mark = Vec::new();
+        let mut stack = vec![index];
+        while let Some(i) = stack.pop() {
+            to_mark.push(i);
+            for &child_idx in &self.nodes[i].children {
+                stack.push(child_idx);
+            }
+        }
+
+        // Mark all collected nodes as deleted with zero size.
+        for &i in &to_mark {
+            self.nodes[i].deleted = true;
+            self.nodes[i].size = 0;
+        }
+
+        // Remove from parent's children list (if not root).
+        if let Some(parent_idx) = self.nodes[index].parent {
+            self.nodes[parent_idx].children.retain(|&c| c != index);
+        }
+    }
 }
 
 #[cfg(test)]
@@ -173,6 +213,7 @@ mod tests {
             parent: None,
             extension: None,
             modified: None,
+            deleted: false,
         }
     }
 
@@ -185,6 +226,7 @@ mod tests {
             parent: None,
             extension: None,
             modified: None,
+            deleted: false,
         }
     }
 
@@ -211,6 +253,7 @@ mod tests {
             parent: Some(42),   // should be cleared
             extension: None,
             modified: Some(1_700_000_000),
+            deleted: false,
         };
         let tree = DirTree::from_root(node);
         assert_eq!(tree.len(), 1);
@@ -294,5 +337,105 @@ mod tests {
         let file = make_file_node("leaf.txt", 10);
         let idx = tree.insert(0, file);
         assert!(tree.children(idx).is_empty());
+    }
+
+    #[test]
+    fn tombstone_leaf_file() {
+        let mut tree = DirTree::new("/root");
+        let file = make_file_node("a.txt", 100);
+        let idx = tree.insert(0, file);
+
+        tree.tombstone(idx);
+
+        let node = tree.get(idx).unwrap();
+        assert!(node.deleted);
+        assert_eq!(node.size, 0);
+        // Parent's children no longer contains the tombstoned index.
+        let root = tree.get(0).unwrap();
+        assert!(!root.children.contains(&idx));
+    }
+
+    #[test]
+    fn tombstone_directory_with_descendants() {
+        let mut tree = DirTree::new("/root");
+        let subdir = make_dir_node("subdir");
+        let idx_sub = tree.insert(0, subdir);
+
+        let file_a = make_file_node("a.txt", 100);
+        let idx_a = tree.insert(idx_sub, file_a);
+
+        let nested_dir = make_dir_node("nested");
+        let idx_nested = tree.insert(idx_sub, nested_dir);
+
+        let file_b = make_file_node("b.txt", 200);
+        let idx_b = tree.insert(idx_nested, file_b);
+
+        tree.tombstone(idx_sub);
+
+        // All descendants are marked deleted with size 0.
+        for &i in &[idx_sub, idx_a, idx_nested, idx_b] {
+            let node = tree.get(i).unwrap();
+            assert!(node.deleted, "node at index {i} should be deleted");
+            assert_eq!(node.size, 0, "node at index {i} should have size 0");
+        }
+        // Directory removed from parent's children.
+        let root = tree.get(0).unwrap();
+        assert!(!root.children.contains(&idx_sub));
+    }
+
+    #[test]
+    fn tombstone_root() {
+        let mut tree = DirTree::new("/root");
+        let file = make_file_node("a.txt", 100);
+        let idx_a = tree.insert(0, file);
+
+        let subdir = make_dir_node("subdir");
+        let idx_sub = tree.insert(0, subdir);
+
+        let file_b = make_file_node("b.txt", 200);
+        let idx_b = tree.insert(idx_sub, file_b);
+
+        tree.tombstone(0);
+
+        // Root and all descendants are deleted.
+        for &i in &[0, idx_a, idx_sub, idx_b] {
+            let node = tree.get(i).unwrap();
+            assert!(node.deleted, "node at index {i} should be deleted");
+            assert_eq!(node.size, 0, "node at index {i} should have size 0");
+        }
+        // Root has no parent, so no parent-removal step needed (no panic).
+    }
+
+    #[test]
+    fn tombstone_preserves_arena_length() {
+        let mut tree = DirTree::new("/root");
+        let file_a = make_file_node("a.txt", 100);
+        tree.insert(0, file_a);
+        let file_b = make_file_node("b.txt", 200);
+        tree.insert(0, file_b);
+
+        let len_before = tree.len();
+        tree.tombstone(1);
+        assert_eq!(
+            tree.len(),
+            len_before,
+            "arena length must not change after tombstone"
+        );
+    }
+
+    #[test]
+    fn tombstone_path_still_works() {
+        let mut tree = DirTree::new("/root");
+        let dir_a = make_dir_node("dir_a");
+        let idx_a = tree.insert(0, dir_a);
+
+        let file = make_file_node("file.txt", 42);
+        let idx_file = tree.insert(idx_a, file);
+
+        tree.tombstone(idx_a);
+
+        // Parent pointer is preserved, so path reconstruction still works.
+        let path = tree.path(idx_file);
+        assert_eq!(path, PathBuf::from("/root/dir_a/file.txt"));
     }
 }

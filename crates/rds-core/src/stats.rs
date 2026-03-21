@@ -121,6 +121,7 @@ mod tests {
             parent: None,
             extension: Some("rs".to_string()),
             modified: None,
+            deleted: false,
         };
         tree.insert(0, file_a);
 
@@ -132,6 +133,7 @@ mod tests {
             parent: None,
             extension: Some("rs".to_string()),
             modified: None,
+            deleted: false,
         };
         tree.insert(0, file_b);
 
@@ -143,6 +145,7 @@ mod tests {
             parent: None,
             extension: Some("txt".to_string()),
             modified: None,
+            deleted: false,
         };
         tree.insert(0, file_c);
 
@@ -169,6 +172,7 @@ mod tests {
             parent: None,
             extension: None,
             modified: None,
+            deleted: false,
         };
         tree.insert(0, no_ext);
         let stats = compute_extension_stats(&tree);

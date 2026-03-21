@@ -237,6 +237,7 @@ mod tests {
             parent: None,
             extension: None,
             modified: None,
+            deleted: false,
         }
     }
 
@@ -249,6 +250,7 @@ mod tests {
             parent: None,
             extension: None,
             modified: None,
+            deleted: false,
         }
     }
 
