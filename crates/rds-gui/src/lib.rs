@@ -64,6 +64,12 @@ pub struct RustDirStatApp {
     /// Cached treemap layout, computed after scan completes. Recomputed
     /// when the central panel resizes. (ref: DL-005)
     treemap_layout: Option<treemap::TreemapLayout>,
+    /// Extension filter: when set, treemap dims files not matching this extension.
+    /// Set by clicking in ext stats panel, independent of `selected_node`. (ref: DL-001)
+    selected_extension: Option<String>,
+    /// Root node index for treemap drill-down. Defaults to `tree.root()` (0).
+    /// Changed by double-click in treemap, navigated via breadcrumb. (ref: DL-006)
+    treemap_root: usize,
 }
 
 impl Default for RustDirStatApp {
@@ -96,6 +102,8 @@ impl RustDirStatApp {
             selected_node: None,
             subtree_stats: None,
             treemap_layout: None,
+            selected_extension: None,
+            treemap_root: 0,
         }
     }
 
@@ -135,6 +143,8 @@ impl RustDirStatApp {
         self.selected_node = None;
         self.subtree_stats = None;
         self.treemap_layout = None;
+        self.selected_extension = None;
+        self.treemap_root = 0;
         self.path_error = None;
         self.phase = ScanPhase::Scanning;
         self.scan_path = Some(path.clone());
@@ -455,6 +465,8 @@ mod tests {
         assert!(app.selected_node.is_none());
         assert!(app.subtree_stats.is_none());
         assert!(app.treemap_layout.is_none());
+        assert!(app.selected_extension.is_none());
+        assert_eq!(app.treemap_root, 0);
         assert!(app.path_error.is_none());
         assert!(app.scan_path.is_none());
         assert!(app.path_input.is_empty());
