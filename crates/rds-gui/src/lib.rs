@@ -127,6 +127,8 @@ pub struct RustDirStatApp {
     custom_commands: Vec<CustomCommand>,
     /// Transient UI state for the custom command editor window.
     command_editor: CommandEditorState,
+    /// Export dialog state (format, scope, visibility, last result).
+    export_dialog: export::ExportDialogState,
 }
 
 impl Default for RustDirStatApp {
@@ -176,6 +178,7 @@ impl RustDirStatApp {
             delete_error: None,
             custom_commands: Vec::new(),
             command_editor: CommandEditorState::default(),
+            export_dialog: export::ExportDialogState::default(),
         }
     }
 
@@ -226,6 +229,7 @@ impl RustDirStatApp {
         self.freed_bytes = 0;
         self.delete_error = None;
         self.path_error = None;
+        self.export_dialog.last_result = None;
         self.phase = ScanPhase::Scanning;
         self.scan_path = Some(path.clone());
 
@@ -834,6 +838,7 @@ mod tests {
         assert_eq!(app.live_node_count, 0);
         assert!(app.custom_commands.is_empty());
         assert!(!app.command_editor.show);
+        assert!(!app.export_dialog.show);
     }
 
     #[test]
