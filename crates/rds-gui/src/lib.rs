@@ -21,6 +21,7 @@ use rds_core::stats::ExtensionStats;
 use rds_core::tree::DirTree;
 
 mod actions;
+mod command_editor;
 mod duplicates;
 mod ext_stats;
 mod tree_view;
@@ -44,7 +45,6 @@ pub(crate) struct DuplicateGroup {
 
 /// Transient UI state for the custom command editor window.
 #[derive(Default)]
-#[allow(dead_code)] // Fields used starting in Task 3 (command editor UI)
 pub(crate) struct CommandEditorState {
     pub(crate) show: bool,
     pub(crate) new_name: String,
@@ -122,10 +122,8 @@ pub struct RustDirStatApp {
     /// Error message from the most recent failed delete attempt.
     delete_error: Option<String>,
     /// User-defined custom commands available in context menus.
-    #[allow(dead_code)] // Wired into context menus in Tasks 4-6
     custom_commands: Vec<CustomCommand>,
     /// Transient UI state for the custom command editor window.
-    #[allow(dead_code)] // Wired into editor UI in Task 3
     command_editor: CommandEditorState,
 }
 
@@ -533,6 +531,9 @@ impl eframe::App for RustDirStatApp {
             self.pending_delete = None;
             self.delete_error = None;
         }
+
+        // --- Command editor window ---
+        command_editor::show(&mut self.custom_commands, &mut self.command_editor, ctx);
 
         // --- Toolbar ---
         egui::TopBottomPanel::top("toolbar").show(ctx, |ui| {
