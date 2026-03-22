@@ -685,6 +685,7 @@ impl eframe::App for RustDirStatApp {
                             &mut self.selected_node,
                             scan_complete,
                             &mut self.pending_delete,
+                            &self.custom_commands,
                             ui,
                         );
                     }

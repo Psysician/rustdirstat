@@ -114,7 +114,6 @@ fn open_file_revealing(path: &std::path::Path) -> Result<(), String> {
 ///
 /// Replaces `{path}` in the command template with the full path of the node,
 /// then spawns the resolved command in a platform-specific shell (fire-and-forget).
-#[allow(dead_code)]
 pub(crate) fn execute_custom_command(
     tree: &DirTree,
     index: usize,

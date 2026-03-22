@@ -7,6 +7,7 @@
 
 use std::collections::HashSet;
 
+use rds_core::CustomCommand;
 use rds_core::tree::DirTree;
 
 use crate::PendingDelete;
@@ -138,6 +139,7 @@ fn expand_ancestors(tree: &DirTree, state: &mut TreeViewState, index: usize) {
 }
 
 /// Renders the directory tree inside a scrollable area.
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn show(
     tree: &DirTree,
     stats: &SubtreeStats,
@@ -145,6 +147,7 @@ pub(crate) fn show(
     selected: &mut Option<usize>,
     scan_complete: bool,
     pending_delete: &mut Option<PendingDelete>,
+    custom_commands: &[CustomCommand],
     ui: &mut egui::Ui,
 ) {
     // Detect external selection change (e.g., treemap click).
@@ -166,6 +169,7 @@ pub(crate) fn show(
             selected,
             scan_complete,
             pending_delete,
+            custom_commands,
             ui,
             0,
         );
@@ -184,6 +188,7 @@ fn render_node(
     selected: &mut Option<usize>,
     scan_complete: bool,
     pending_delete: &mut Option<PendingDelete>,
+    custom_commands: &[CustomCommand],
     ui: &mut egui::Ui,
     depth: usize,
 ) {
@@ -249,6 +254,15 @@ fn render_node(
                     let _ = crate::actions::open_in_file_manager(tree, index);
                     ui.close();
                 }
+                if !custom_commands.is_empty() {
+                    ui.separator();
+                    for command in custom_commands {
+                        if ui.button(&command.name).clicked() {
+                            let _ = crate::actions::execute_custom_command(tree, index, command);
+                            ui.close();
+                        }
+                    }
+                }
                 if index != tree.root() {
                     ui.separator();
                     if ui.button("Delete").clicked() {
@@ -279,6 +293,7 @@ fn render_node(
                 selected,
                 scan_complete,
                 pending_delete,
+                custom_commands,
                 ui,
                 depth + 1,
             );
