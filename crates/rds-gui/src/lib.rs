@@ -258,6 +258,7 @@ impl RustDirStatApp {
         self.export_dialog.last_result = None;
         self.phase = ScanPhase::Scanning;
         self.scan_path = Some(path.clone());
+        self.track_recent_path(path.clone());
 
         // Launch scanner.
         let (tx, rx) = crossbeam_channel::bounded(4096);
@@ -489,6 +490,21 @@ impl RustDirStatApp {
         }
     }
 
+    /// Tracks a path in the recent paths list. Canonicalizes the path (falling
+    /// back to the original if canonicalization fails), removes any existing
+    /// occurrence, inserts at position 0, and truncates to `max_recent_paths`.
+    /// Persists the updated config via the save callback.
+    fn track_recent_path(&mut self, path: PathBuf) {
+        let canonical = std::fs::canonicalize(&path).unwrap_or(path);
+        self.recent_paths.retain(|p| p != &canonical);
+        self.recent_paths.insert(0, canonical);
+        self.recent_paths.truncate(self.max_recent_paths);
+        let config = self.collect_config();
+        if let Some(ref save_fn) = self.config_save_fn {
+            save_fn(&config);
+        }
+    }
+
     fn collect_config(&self) -> rds_core::AppConfig {
         rds_core::AppConfig {
             custom_commands: self.custom_commands.clone(),
@@ -599,6 +615,23 @@ impl eframe::App for RustDirStatApp {
                     self.start_scan(path);
                 }
 
+                if !self.recent_paths.is_empty() {
+                    let mut selected_recent: Option<PathBuf> = None;
+                    ui.menu_button("Recent", |ui| {
+                        for recent in &self.recent_paths {
+                            let label = recent.display().to_string();
+                            if ui.selectable_label(false, &label).clicked() {
+                                selected_recent = Some(recent.clone());
+                                ui.close();
+                            }
+                        }
+                    });
+                    if let Some(path) = selected_recent {
+                        self.path_input = path.display().to_string();
+                        self.start_scan(path);
+                    }
+                }
+
                 ui.separator();
 
                 // Text input fallback — always works, including WSL2.
@@ -606,7 +639,7 @@ impl eframe::App for RustDirStatApp {
                 // Detect Duplicates checkbox (~150px) + separator (~10px) +
                 // Commands button (~90px) + separator (~10px) +
                 // Export button (~70px).
-                const TOOLBAR_FIXED_CONTROLS_WIDTH: f32 = 390.0;
+                const TOOLBAR_FIXED_CONTROLS_WIDTH: f32 = 460.0;
                 let text_width = (ui.available_width() - TOOLBAR_FIXED_CONTROLS_WIDTH).max(100.0);
                 let response = ui.add(
                     egui::TextEdit::singleline(&mut self.path_input)
