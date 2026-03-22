@@ -21,6 +21,7 @@ open = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 csv = { workspace = true }
+egui-notify = { workspace = true }
 
 [dev-dependencies]
 tempfile = { workspace = true }
