@@ -28,16 +28,18 @@ rustdirstat/
       tests/
         scan_integration.rs   # Integration tests with temp directory fixtures
         duplicate_integration.rs # Duplicate detection integration tests
-    rds-gui/                  # egui/eframe GUI: dir picker, tree view, ext stats, treemap, duplicates, delete actions
-      Cargo.toml              # Deps: eframe, egui, streemap, crossbeam-channel, rds-core, rds-scanner, rfd, trash
+    rds-gui/                  # egui/eframe GUI: dir picker, tree view, ext stats, treemap, duplicates, actions, export
+      Cargo.toml              # Deps: eframe, egui, streemap, crossbeam-channel, rds-core, rds-scanner, rfd, trash, open, serde, serde_json, csv
       CLAUDE.md
       src/
-        lib.rs                # RustDirStatApp: ScanPhase state machine, dir picker, scanner integration, 3-panel layout, PendingDelete, confirm_delete, delete dialog
+        lib.rs                # RustDirStatApp: ScanPhase state machine, dir picker, scanner integration, 3-panel layout, PendingDelete, confirm_delete, CommandEditorState, ExportDialogState
         tree_view.rs           # SubtreeStats cache (filters deleted), TreeViewState, sorted tree rendering with context menu
         ext_stats.rs           # hsl_to_color32, extension stats panel with stacked bar + Grid table
         treemap.rs             # CushionCoeffs, TreemapLayout, recursive squarify, cushion mesh render, right-click context menu
         duplicates.rs          # Duplicates bottom panel with collapsible groups, wasted space, context menu
-        actions.rs             # execute_delete (trash + tombstone), cleanup_duplicate_groups
+        actions.rs             # execute_delete (trash + tombstone), cleanup_duplicate_groups, open_in_file_manager, execute_custom_command
+        command_editor.rs      # Command editor window: inline editing of custom commands, add/remove controls
+        export.rs              # CSV/JSON export: ExportFormat/ExportScope enums, export_tree (DFS + serialize), export_duplicates, export dialog UI
   .github/
     workflows/
       ci.yml                  # Build + test + clippy + fmt on ubuntu/macos/windows
@@ -109,4 +111,7 @@ rustdirstat/
 | 11 | Incremental Scan Display | Done |
 | 12 | Duplicate Detection | Done |
 | 13 | Delete Action (Trash) | Done |
-| 14-21 | See docs/milestones.md | Pending |
+| 14 | Open in File Manager | Done |
+| 15 | Custom Commands | Done |
+| 16 | CSV/JSON Export | Done |
+| 17-21 | See docs/milestones.md | Pending |
