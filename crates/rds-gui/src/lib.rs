@@ -496,6 +496,14 @@ impl RustDirStatApp {
         }
     }
 
+    /// Persists the current config to disk via the save callback.
+    fn save_config(&self) {
+        let config = self.collect_config();
+        if let Some(ref save_fn) = self.config_save_fn {
+            save_fn(&config);
+        }
+    }
+
     /// Tracks a path in the recent paths list. Canonicalizes the path (falling
     /// back to the original if canonicalization fails), removes any existing
     /// occurrence, inserts at position 0, and truncates to `max_recent_paths`.
@@ -505,10 +513,7 @@ impl RustDirStatApp {
         self.recent_paths.retain(|p| p != &canonical);
         self.recent_paths.insert(0, canonical);
         self.recent_paths.truncate(self.max_recent_paths);
-        let config = self.collect_config();
-        if let Some(ref save_fn) = self.config_save_fn {
-            save_fn(&config);
-        }
+        self.save_config();
     }
 
     fn collect_config(&self) -> rds_core::AppConfig {
@@ -599,7 +604,11 @@ impl eframe::App for RustDirStatApp {
         }
 
         // --- Command editor window ---
-        command_editor::show(&mut self.custom_commands, &mut self.command_editor, ctx);
+        let commands_changed =
+            command_editor::show(&mut self.custom_commands, &mut self.command_editor, ctx);
+        if commands_changed {
+            self.save_config();
+        }
 
         // --- Export dialog ---
         export::show_dialog(
@@ -619,10 +628,7 @@ impl eframe::App for RustDirStatApp {
             ctx,
         );
         if settings_applied {
-            let config = self.collect_config();
-            if let Some(ref save_fn) = self.config_save_fn {
-                save_fn(&config);
-            }
+            self.save_config();
         }
 
         // --- Toolbar ---
