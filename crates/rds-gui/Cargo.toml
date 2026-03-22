@@ -18,6 +18,9 @@ tracing = { workspace = true }
 rfd = { workspace = true }
 trash = { workspace = true }
 open = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+csv = { workspace = true }
 
 [dev-dependencies]
 tempfile = { workspace = true }

@@ -23,6 +23,8 @@ use rds_core::tree::DirTree;
 mod actions;
 mod command_editor;
 mod duplicates;
+#[allow(dead_code)]
+mod export;
 mod ext_stats;
 mod tree_view;
 mod treemap;
