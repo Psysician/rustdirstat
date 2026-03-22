@@ -25,6 +25,7 @@ mod command_editor;
 mod duplicates;
 mod export;
 mod ext_stats;
+mod settings;
 mod tree_view;
 mod treemap;
 
@@ -128,6 +129,8 @@ pub struct RustDirStatApp {
     command_editor: CommandEditorState,
     /// Export dialog state (format, scope, visibility, last result).
     export_dialog: export::ExportDialogState,
+    /// Settings dialog state (working copies of config fields).
+    settings_dialog: settings::SettingsDialogState,
     /// Glob patterns to exclude from scans.
     exclude_patterns: Vec<String>,
     /// Recently scanned paths for quick re-access.
@@ -193,6 +196,7 @@ impl RustDirStatApp {
             custom_commands: config.custom_commands,
             command_editor: CommandEditorState::default(),
             export_dialog: export::ExportDialogState::default(),
+            settings_dialog: settings::SettingsDialogState::default(),
             exclude_patterns: config.exclude_patterns,
             recent_paths: config.recent_paths,
             default_sort: config.default_sort,
@@ -606,6 +610,21 @@ impl eframe::App for RustDirStatApp {
             ctx,
         );
 
+        // --- Settings dialog ---
+        let settings_applied = settings::show(
+            &mut self.settings_dialog,
+            &mut self.exclude_patterns,
+            &mut self.default_sort,
+            &mut self.color_scheme,
+            ctx,
+        );
+        if settings_applied {
+            let config = self.collect_config();
+            if let Some(ref save_fn) = self.config_save_fn {
+                save_fn(&config);
+            }
+        }
+
         // --- Toolbar ---
         egui::TopBottomPanel::top("toolbar").show(ctx, |ui| {
             ui.horizontal(|ui| {
@@ -639,9 +658,9 @@ impl eframe::App for RustDirStatApp {
                 // Text input fallback — always works, including WSL2.
                 // Reserve space for: Scan button (~50px) + separator (~10px) +
                 // Detect Duplicates checkbox (~150px) + separator (~10px) +
-                // Commands button (~90px) + separator (~10px) +
-                // Export button (~70px).
-                const TOOLBAR_FIXED_CONTROLS_WIDTH: f32 = 460.0;
+                // Commands button (~90px) + Settings button (~80px) +
+                // separator (~10px) + Export button (~70px).
+                const TOOLBAR_FIXED_CONTROLS_WIDTH: f32 = 550.0;
                 let text_width = (ui.available_width() - TOOLBAR_FIXED_CONTROLS_WIDTH).max(100.0);
                 let response = ui.add(
                     egui::TextEdit::singleline(&mut self.path_input)
@@ -675,6 +694,17 @@ impl eframe::App for RustDirStatApp {
                 ui.separator();
                 if ui.button("Commands...").clicked() {
                     self.command_editor.show = !self.command_editor.show;
+                }
+
+                if ui.button("Settings...").clicked() {
+                    if !self.settings_dialog.show {
+                        self.settings_dialog.exclude_patterns =
+                            self.exclude_patterns.clone();
+                        self.settings_dialog.default_sort = self.default_sort.clone();
+                        self.settings_dialog.color_scheme = self.color_scheme.clone();
+                        self.settings_dialog.new_pattern = String::new();
+                    }
+                    self.settings_dialog.show = !self.settings_dialog.show;
                 }
 
                 ui.separator();
