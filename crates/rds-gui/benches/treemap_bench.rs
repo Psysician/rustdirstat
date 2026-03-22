@@ -50,7 +50,10 @@ fn build_tree(node_count: usize) -> DirTree {
         let parent = dir_indices[i % dir_count];
         let ext = extensions[i % extensions.len()];
         let size = ((i as u64 % 10_000) + 1) * 1024;
-        tree.insert(parent, make_file(&format!("file_{i}.{ext}"), size, Some(ext)));
+        tree.insert(
+            parent,
+            make_file(&format!("file_{i}.{ext}"), size, Some(ext)),
+        );
     }
 
     tree

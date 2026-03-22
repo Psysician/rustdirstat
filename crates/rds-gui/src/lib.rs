@@ -34,7 +34,7 @@ mod treemap;
 #[cfg(feature = "bench-internals")]
 pub use tree_view::SubtreeStats;
 #[cfg(feature = "bench-internals")]
-pub use treemap::{TreemapLayout, TreemapRect, MAX_DISPLAY_RECTS};
+pub use treemap::{MAX_DISPLAY_RECTS, TreemapLayout, TreemapRect};
 
 /// Scan lifecycle phases. (ref: DL-004)
 enum ScanPhase {

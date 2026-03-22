@@ -73,9 +73,9 @@ Note: `path_to_index` is dropped after scanning completes. Post-scan memory is s
 
 Measured with `--scan-only` flag. Actual numbers depend on filesystem cache state, storage device, and directory structure.
 
-| Directory | Node count | Duration | Throughput | Notes |
-| --------- | ---------- | -------- | ---------- | ----- |
-| (pending) | — | — | — | Run `cargo run -- --scan-only /usr` to measure |
+| Directory | Files | Dirs | Bytes | Duration | Files/sec | Errors |
+| --------- | ----- | ---- | ----- | -------- | --------- | ------ |
+| `/usr` | 100,073 | 10,076 | 20.5 GB | 11.12s | 8,995 | 3 |
 
 To collect scan throughput data:
 
@@ -92,19 +92,41 @@ cargo run --release -- --scan-only /usr
 
 ### Criterion benchmark results (treemap)
 
-| Benchmark | Scale | Median | Notes |
-| --------- | ----- | ------ | ----- |
-| `treemap_layout_compute` | (pending) | — | Run `cargo bench -p rds-gui --features bench-internals` |
-| `subtree_stats_compute` | (pending) | — | |
-| `treemap_with_aggregation` | (pending) | — | |
+Run with `cargo bench -p rds-gui --features bench-internals`.
+
+| Benchmark | Scale | Median |
+| --------- | ----- | ------ |
+| `treemap_layout_compute` | 1,000 | 68.5 us |
+| `treemap_layout_compute` | 10,000 | 778 us |
+| `treemap_layout_compute` | 50,000 | 6.09 ms |
+| `treemap_layout_compute` | 100,000 | 6.54 ms |
+| `treemap_layout_compute` | 500,000 | 17.0 ms |
+| `subtree_stats_compute` | 1,000 | 3.24 us |
+| `subtree_stats_compute` | 10,000 | 35.0 us |
+| `subtree_stats_compute` | 50,000 | 237 us |
+| `subtree_stats_compute` | 100,000 | 1.33 ms |
+| `subtree_stats_compute` | 500,000 | 11.3 ms |
+| `treemap_with_aggregation` | 100,000 | 6.44 ms |
+| `treemap_with_aggregation` | 500,000 | 16.6 ms |
+
+Note: at 100k+ nodes the treemap layout time plateaus around 6-7ms due to the 50k rect cap -- aggregation prevents super-linear scaling.
 
 ### Criterion benchmark results (tree operations)
 
-| Benchmark | Scale | Median | Notes |
-| --------- | ----- | ------ | ----- |
-| `insert_nodes` | (pending) | — | Run `cargo bench -p rds-core` |
-| `subtree_size` | (pending) | — | |
-| `compute_extension_stats` | (pending) | — | |
+Run with `cargo bench -p rds-core`.
+
+| Benchmark | Scale | Median |
+| --------- | ----- | ------ |
+| `insert_nodes` | 1,000 | 134 us |
+| `insert_nodes` | 10,000 | 1.35 ms |
+| `insert_nodes` | 100,000 | 15.3 ms |
+| `insert_nodes` | 1,000,000 | 286 ms |
+| `subtree_size` | 10,000 | 29.2 us |
+| `subtree_size` | 100,000 | 859 us |
+| `subtree_size` | 1,000,000 | 13.5 ms |
+| `compute_extension_stats` | 10,000 | 508 us |
+| `compute_extension_stats` | 100,000 | 5.64 ms |
+| `compute_extension_stats` | 1,000,000 | 53.8 ms |
 
 ## Comparison with External Tools
 
