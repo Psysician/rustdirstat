@@ -92,3 +92,74 @@ fn main() -> eframe::Result {
         }),
     )
 }
+
+#[cfg(test)]
+mod tests {
+    use rds_core::AppConfig;
+
+    #[test]
+    fn toml_roundtrip_all_fields() {
+        let config = AppConfig {
+            exclude_patterns: vec!["*.log".to_string(), ".git".to_string()],
+            custom_commands: vec![rds_core::CustomCommand {
+                name: "Open Editor".to_string(),
+                template: "code {path}".to_string(),
+            }],
+            color_scheme: "dark".to_string(),
+            default_sort: "name_asc".to_string(),
+            recent_paths: vec![
+                std::path::PathBuf::from("/tmp/test"),
+                std::path::PathBuf::from("/home/user"),
+            ],
+            max_recent_paths: 20,
+            follow_symlinks: true,
+        };
+
+        let toml_str = toml::to_string(&config).expect("serialize to TOML");
+        let restored: AppConfig = toml::from_str(&toml_str).expect("deserialize from TOML");
+
+        assert_eq!(restored.exclude_patterns, config.exclude_patterns);
+        assert_eq!(restored.custom_commands.len(), 1);
+        assert_eq!(restored.custom_commands[0].name, "Open Editor");
+        assert_eq!(restored.custom_commands[0].template, "code {path}");
+        assert_eq!(restored.color_scheme, "dark");
+        assert_eq!(restored.default_sort, "name_asc");
+        assert_eq!(restored.recent_paths, config.recent_paths);
+        assert_eq!(restored.max_recent_paths, 20);
+        assert!(restored.follow_symlinks);
+    }
+
+    #[test]
+    fn toml_missing_fields_use_defaults() {
+        let partial = r#"color_scheme = "dark""#;
+        let config: AppConfig = toml::from_str(partial).expect("deserialize partial TOML");
+
+        assert_eq!(config.color_scheme, "dark");
+        assert!(config.exclude_patterns.is_empty());
+        assert!(config.custom_commands.is_empty());
+        assert_eq!(config.default_sort, "size_desc");
+        assert!(config.recent_paths.is_empty());
+        assert_eq!(config.max_recent_paths, 10);
+        assert!(!config.follow_symlinks);
+    }
+
+    #[test]
+    fn toml_empty_string_yields_default() {
+        let config: AppConfig = toml::from_str("").expect("deserialize empty TOML");
+        let default = AppConfig::default();
+
+        assert_eq!(config.color_scheme, default.color_scheme);
+        assert_eq!(config.default_sort, default.default_sort);
+        assert_eq!(config.max_recent_paths, default.max_recent_paths);
+        assert_eq!(config.follow_symlinks, default.follow_symlinks);
+        assert_eq!(config.exclude_patterns, default.exclude_patterns);
+        assert_eq!(config.recent_paths, default.recent_paths);
+        assert!(config.custom_commands.is_empty());
+    }
+
+    #[test]
+    fn toml_invalid_returns_error() {
+        let result = toml::from_str::<AppConfig>("[[[bad");
+        assert!(result.is_err());
+    }
+}
