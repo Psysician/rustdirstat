@@ -49,6 +49,10 @@ bench-report:
         echo "Open target/criterion/report/index.html in your browser"
     fi
 
+# Compare scan performance against dust and dua via hyperfine
+bench-compare dir="/usr":
+    ./scripts/benchmark-comparison.sh {{dir}}
+
 # Remove build artifacts
 clean:
     cargo clean

@@ -4,8 +4,11 @@
 
 use clap::Parser;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
+use std::sync::atomic::AtomicBool;
 
 use rds_core::AppConfig;
+use rds_core::scan::{ScanConfig, ScanEvent};
 
 /// Command-line arguments. `path` is the root directory passed to the scanner.
 #[derive(Parser)]
@@ -13,6 +16,10 @@ use rds_core::AppConfig;
 struct Cli {
     /// Path to scan
     path: Option<PathBuf>,
+
+    /// Run scan without GUI and print stats to stdout
+    #[arg(long)]
+    scan_only: bool,
 }
 
 /// Loads `AppConfig` from the platform config directory (`config_dir/config.toml`).
@@ -67,10 +74,56 @@ fn save_config(config: &AppConfig, path: &Path) {
     }
 }
 
-/// Initialises tracing, parses CLI args, loads config, and runs the native
-/// eframe event loop. Default window size is 1024x768; eframe enforces no
-/// minimum size, so this provides a usable starting layout for the treemap
-/// without requiring the user to resize first.
+/// Runs scan-only mode: scans the given path without launching the GUI,
+/// prints scan stats to stdout, and exits.
+fn run_scan_only(path: PathBuf) {
+    let config = ScanConfig {
+        root: path,
+        hash_duplicates: false,
+        ..ScanConfig::default()
+    };
+
+    let (tx, rx) = crossbeam_channel::bounded::<ScanEvent>(4096);
+    let cancel = Arc::new(AtomicBool::new(false));
+
+    let handle = rds_scanner::Scanner::scan(config, tx, cancel);
+
+    loop {
+        match rx.recv() {
+            Ok(ScanEvent::ScanComplete { stats }) => {
+                let duration_secs = stats.duration_ms as f64 / 1000.0;
+                let files_per_sec = if duration_secs > 0.0 {
+                    stats.total_files as f64 / duration_secs
+                } else {
+                    0.0
+                };
+
+                println!("Scan complete:");
+                println!("  Files:     {}", stats.total_files);
+                println!("  Dirs:      {}", stats.total_dirs);
+                println!("  Bytes:     {}", stats.total_bytes);
+                println!("  Duration:  {:.2}s", duration_secs);
+                println!("  Files/sec: {:.0}", files_per_sec);
+                if stats.errors > 0 {
+                    println!("  Errors:    {}", stats.errors);
+                }
+                break;
+            }
+            Ok(_) => {}
+            Err(_) => {
+                eprintln!("Scanner channel closed unexpectedly");
+                break;
+            }
+        }
+    }
+
+    let _ = handle.join();
+}
+
+/// Initialises tracing, parses CLI args, loads config, and runs either
+/// scan-only mode or the native eframe event loop. Default window size is
+/// 1024x768; eframe enforces no minimum size, so this provides a usable
+/// starting layout for the treemap without requiring the user to resize first.
 /// Returns eframe::Result so OS-level window errors propagate to the process exit code.
 fn main() -> eframe::Result {
     let cli = Cli::parse();
@@ -81,6 +134,12 @@ fn main() -> eframe::Result {
             EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("warn")),
         )
         .init();
+
+    if cli.scan_only {
+        let path = cli.path.unwrap_or_else(|| PathBuf::from("."));
+        run_scan_only(path);
+        return Ok(());
+    }
 
     let (config, config_path) = load_config();
 

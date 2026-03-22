@@ -3273,11 +3273,13 @@ name = "rustdirstat"
 version = "0.1.0"
 dependencies = [
  "clap",
+ "crossbeam-channel",
  "directories",
  "eframe",
  "egui",
  "rds-core",
  "rds-gui",
+ "rds-scanner",
  "serde",
  "toml",
  "tracing",
