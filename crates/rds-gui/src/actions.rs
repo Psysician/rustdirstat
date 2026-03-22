@@ -144,8 +144,11 @@ pub(crate) fn execute_custom_command(
         .map_err(|e| e.to_string());
 
     match spawn_result {
-        Ok(_child) => {
+        Ok(mut child) => {
             tracing::debug!("{}: {}", command.name, resolved_command);
+            std::thread::spawn(move || {
+                let _ = child.wait();
+            });
             Ok(())
         }
         Err(e) => {
