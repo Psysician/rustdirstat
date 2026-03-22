@@ -1,10 +1,12 @@
-//! File actions for the GUI (delete, open in file manager).
+//! File actions for the GUI (delete, open in file manager, custom commands).
 //!
 //! `execute_delete` sends a file/directory to the OS trash and tombstones the
 //! arena node. `cleanup_duplicate_groups` prunes stale entries from duplicate
 //! groups after deletions. `open_in_file_manager` reveals a file or directory
-//! in the platform's native file manager.
+//! in the platform's native file manager. `execute_custom_command` runs a
+//! user-defined shell command with `{path}` placeholder substitution.
 
+use rds_core::CustomCommand;
 use rds_core::tree::DirTree;
 
 use crate::DuplicateGroup;
@@ -82,22 +84,26 @@ fn open_file_revealing(path: &std::path::Path) -> Result<(), String> {
         // `/select,"<path>"` token exactly as intended, even when the path
         // contains spaces, commas, or cmd metacharacters like `&` or `%`.
         use std::os::windows::process::CommandExt;
-        let child = std::process::Command::new("explorer")
+        let mut child = std::process::Command::new("explorer")
             .raw_arg(format!("/select,\"{}\"", path.display()))
             .spawn()
             .map_err(|e| e.to_string())?;
-        std::thread::spawn(move || { let _ = child.wait(); });
+        std::thread::spawn(move || {
+            let _ = child.wait();
+        });
         Ok(())
     }
 
     #[cfg(target_os = "macos")]
     {
-        let child = std::process::Command::new("open")
+        let mut child = std::process::Command::new("open")
             .arg("-R")
             .arg(path)
             .spawn()
             .map_err(|e| e.to_string())?;
-        std::thread::spawn(move || { let _ = child.wait(); });
+        std::thread::spawn(move || {
+            let _ = child.wait();
+        });
         Ok(())
     }
 
@@ -105,6 +111,92 @@ fn open_file_revealing(path: &std::path::Path) -> Result<(), String> {
     {
         let target = path.parent().unwrap_or(path);
         open::that_detached(target).map_err(|e| e.to_string())
+    }
+}
+
+/// Shell-escapes a path string for safe interpolation into a shell command.
+///
+/// On Unix, wraps in single quotes and escapes embedded single quotes.
+/// On Windows cmd, wraps in double quotes and escapes embedded double quotes.
+fn shell_escape(s: &str) -> String {
+    #[cfg(not(target_os = "windows"))]
+    {
+        format!("'{}'", s.replace('\'', "'\\''"))
+    }
+    #[cfg(target_os = "windows")]
+    {
+        format!("\"{}\"", s.replace('"', "\"\""))
+    }
+}
+
+/// Resolves a command template by replacing `{path}` with a shell-escaped path.
+fn resolve_template(template: &str, path: &std::path::Path) -> String {
+    let escaped = shell_escape(&path.to_string_lossy());
+    template.replace("{path}", &escaped)
+}
+
+/// Executes a user-defined custom command for the filesystem entry at `index`.
+///
+/// Replaces `{path}` in the command template with the shell-escaped full path
+/// of the node, then spawns the resolved command in a platform-specific shell
+/// (fire-and-forget).
+pub(crate) fn execute_custom_command(
+    tree: &DirTree,
+    index: usize,
+    command: &CustomCommand,
+) -> Result<(), String> {
+    tree.get(index)
+        .ok_or_else(|| format!("node at index {index} not found"))?;
+
+    let path = tree.path(index);
+    let resolved_command = resolve_template(&command.template, &path);
+
+    #[cfg(not(target_os = "windows"))]
+    let spawn_result = std::process::Command::new("sh")
+        .arg("-c")
+        .arg(&resolved_command)
+        .spawn()
+        .map_err(|e| e.to_string());
+
+    #[cfg(target_os = "windows")]
+    let spawn_result = std::process::Command::new("cmd")
+        .arg("/c")
+        .arg(&resolved_command)
+        .spawn()
+        .map_err(|e| e.to_string());
+
+    match spawn_result {
+        Ok(mut child) => {
+            tracing::debug!("{}: {}", command.name, resolved_command);
+            std::thread::spawn(move || {
+                let _ = child.wait();
+            });
+            Ok(())
+        }
+        Err(e) => {
+            tracing::warn!("failed to execute '{}': {e}", command.name);
+            Err(e)
+        }
+    }
+}
+
+/// Renders custom command buttons in a context menu. Adds a separator before
+/// the commands if the list is non-empty.
+pub(crate) fn show_custom_commands_menu(
+    ui: &mut egui::Ui,
+    tree: &DirTree,
+    index: usize,
+    commands: &[CustomCommand],
+) {
+    if commands.is_empty() {
+        return;
+    }
+    ui.separator();
+    for command in commands {
+        if ui.button(&command.name).clicked() {
+            let _ = execute_custom_command(tree, index, command);
+            ui.close();
+        }
     }
 }
 
@@ -210,5 +302,118 @@ mod tests {
         let tree = DirTree::new("/some/root");
         let result = open_in_file_manager(&tree, 999);
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn resolve_template_substitutes_path() {
+        let path = std::path::Path::new("/tmp/test.txt");
+        let result = resolve_template("echo {path}", path);
+        assert!(
+            result.contains("/tmp/test.txt"),
+            "expected path in result, got: {result}"
+        );
+    }
+
+    #[test]
+    #[cfg(not(target_os = "windows"))]
+    fn resolve_template_escapes_single_quotes() {
+        let path = std::path::Path::new("/tmp/it's a file.txt");
+        let result = resolve_template("echo {path}", path);
+        assert_eq!(result, "echo '/tmp/it'\\''s a file.txt'");
+    }
+
+    #[test]
+    fn resolve_template_no_placeholder() {
+        let path = std::path::Path::new("/tmp/test.txt");
+        let result = resolve_template("echo hello", path);
+        assert_eq!(result, "echo hello");
+    }
+
+    #[test]
+    #[cfg(not(target_os = "windows"))]
+    fn shell_escape_simple_path() {
+        let result = shell_escape("/tmp/test.txt");
+        assert_eq!(result, "'/tmp/test.txt'");
+    }
+
+    #[test]
+    #[cfg(not(target_os = "windows"))]
+    fn shell_escape_path_with_spaces() {
+        let result = shell_escape("/tmp/my files/test.txt");
+        assert_eq!(result, "'/tmp/my files/test.txt'");
+    }
+
+    #[test]
+    #[cfg(not(target_os = "windows"))]
+    fn shell_escape_path_with_single_quote() {
+        let result = shell_escape("/tmp/it's here.txt");
+        assert_eq!(result, "'/tmp/it'\\''s here.txt'");
+    }
+
+    #[test]
+    #[cfg(not(target_os = "windows"))]
+    fn shell_escape_path_with_shell_metacharacters() {
+        let result = shell_escape("/tmp/$(whoami).txt");
+        assert_eq!(result, "'/tmp/$(whoami).txt'");
+    }
+
+    #[test]
+    #[cfg(target_os = "windows")]
+    fn shell_escape_simple_path_windows() {
+        let result = shell_escape("C:\\Users\\test.txt");
+        assert_eq!(result, "\"C:\\Users\\test.txt\"");
+    }
+
+    #[test]
+    #[cfg(target_os = "windows")]
+    fn shell_escape_path_with_spaces_windows() {
+        let result = shell_escape("C:\\My Files\\test.txt");
+        assert_eq!(result, "\"C:\\My Files\\test.txt\"");
+    }
+
+    #[test]
+    #[cfg(target_os = "windows")]
+    fn shell_escape_path_with_double_quote_windows() {
+        let result = shell_escape("C:\\test\"file.txt");
+        assert_eq!(result, "\"C:\\test\"\"file.txt\"");
+    }
+
+    #[test]
+    #[ignore]
+    fn execute_custom_command_substitutes_path() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let root_path = tmp.path();
+
+        let mut tree = DirTree::new(root_path.to_str().unwrap());
+        let file_idx = tree.insert(0, make_file_node("test.txt", 5));
+
+        let cmd = CustomCommand {
+            name: "Echo Path".to_string(),
+            template: "echo {path}".to_string(),
+        };
+
+        let result = execute_custom_command(&tree, file_idx, &cmd);
+        assert!(
+            result.is_ok(),
+            "execute_custom_command failed: {:?}",
+            result.err()
+        );
+    }
+
+    #[test]
+    fn execute_custom_command_invalid_index_returns_error() {
+        let tree = DirTree::new("/some/root");
+        let cmd = CustomCommand {
+            name: "Test".to_string(),
+            template: "echo {path}".to_string(),
+        };
+
+        let result = execute_custom_command(&tree, 999, &cmd);
+        assert!(result.is_err());
+        assert!(
+            result.as_ref().unwrap_err().contains("not found"),
+            "expected 'not found' in error, got: {:?}",
+            result.err()
+        );
     }
 }

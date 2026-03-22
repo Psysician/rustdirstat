@@ -8,6 +8,7 @@
 use crate::PendingDelete;
 use crate::ext_stats;
 use crate::tree_view::SubtreeStats;
+use rds_core::CustomCommand;
 use rds_core::tree::DirTree;
 
 /// Minimum dimension (width or height) for a rect to be worth subdividing.
@@ -363,6 +364,7 @@ pub(crate) fn show(
     treemap_root: &mut usize,
     scan_complete: bool,
     pending_delete: &mut Option<PendingDelete>,
+    custom_commands: &[CustomCommand],
     ui: &mut egui::Ui,
 ) {
     let (response, painter) = ui.allocate_painter(layout.last_size, egui::Sense::click());
@@ -477,6 +479,7 @@ pub(crate) fn show(
                     let _ = crate::actions::open_in_file_manager(tree, sel_idx);
                     ui.close();
                 }
+                crate::actions::show_custom_commands_menu(ui, tree, sel_idx, custom_commands);
                 if sel_idx != tree.root() {
                     ui.separator();
                     if ui.button("Delete").clicked() {

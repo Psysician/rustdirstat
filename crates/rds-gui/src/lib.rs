@@ -15,11 +15,13 @@ use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 
 use crossbeam_channel::Receiver;
+use rds_core::CustomCommand;
 use rds_core::scan::{ScanConfig, ScanEvent, ScanStats};
 use rds_core::stats::ExtensionStats;
 use rds_core::tree::DirTree;
 
 mod actions;
+mod command_editor;
 mod duplicates;
 mod ext_stats;
 mod tree_view;
@@ -39,6 +41,14 @@ enum ScanPhase {
 pub(crate) struct DuplicateGroup {
     pub(crate) node_indices: Vec<usize>,
     pub(crate) wasted_bytes: u64,
+}
+
+/// Transient UI state for the custom command editor window.
+#[derive(Default)]
+pub(crate) struct CommandEditorState {
+    pub(crate) show: bool,
+    pub(crate) new_name: String,
+    pub(crate) new_template: String,
 }
 
 /// Pending delete confirmation state. Populated when the user initiates a
@@ -111,6 +121,10 @@ pub struct RustDirStatApp {
     freed_bytes: u64,
     /// Error message from the most recent failed delete attempt.
     delete_error: Option<String>,
+    /// User-defined custom commands available in context menus.
+    custom_commands: Vec<CustomCommand>,
+    /// Transient UI state for the custom command editor window.
+    command_editor: CommandEditorState,
 }
 
 impl Default for RustDirStatApp {
@@ -158,6 +172,8 @@ impl RustDirStatApp {
             pending_delete: None,
             freed_bytes: 0,
             delete_error: None,
+            custom_commands: Vec::new(),
+            command_editor: CommandEditorState::default(),
         }
     }
 
@@ -516,6 +532,9 @@ impl eframe::App for RustDirStatApp {
             self.delete_error = None;
         }
 
+        // --- Command editor window ---
+        command_editor::show(&mut self.custom_commands, &mut self.command_editor, ctx);
+
         // --- Toolbar ---
         egui::TopBottomPanel::top("toolbar").show(ctx, |ui| {
             ui.horizontal(|ui| {
@@ -531,8 +550,9 @@ impl eframe::App for RustDirStatApp {
 
                 // Text input fallback — always works, including WSL2.
                 // Reserve space for: Scan button (~50px) + separator (~10px) +
-                // Detect Duplicates checkbox (~150px).
-                const TOOLBAR_FIXED_CONTROLS_WIDTH: f32 = 210.0;
+                // Detect Duplicates checkbox (~150px) + separator (~10px) +
+                // Commands button (~90px).
+                const TOOLBAR_FIXED_CONTROLS_WIDTH: f32 = 310.0;
                 let text_width = (ui.available_width() - TOOLBAR_FIXED_CONTROLS_WIDTH).max(100.0);
                 let response = ui.add(
                     egui::TextEdit::singleline(&mut self.path_input)
@@ -562,6 +582,11 @@ impl eframe::App for RustDirStatApp {
 
                 ui.separator();
                 ui.checkbox(&mut self.hash_duplicates_enabled, "Detect Duplicates");
+
+                ui.separator();
+                if ui.button("Commands...").clicked() {
+                    self.command_editor.show = !self.command_editor.show;
+                }
             });
         });
 
@@ -646,6 +671,7 @@ impl eframe::App for RustDirStatApp {
                         &mut self.selected_node,
                         scan_complete,
                         &mut self.pending_delete,
+                        &self.custom_commands,
                         ui,
                     );
                 });
@@ -666,6 +692,7 @@ impl eframe::App for RustDirStatApp {
                             &mut self.selected_node,
                             scan_complete,
                             &mut self.pending_delete,
+                            &self.custom_commands,
                             ui,
                         );
                     }
@@ -748,6 +775,7 @@ impl eframe::App for RustDirStatApp {
                         &mut self.treemap_root,
                         scan_complete,
                         &mut self.pending_delete,
+                        &self.custom_commands,
                         ui,
                     );
                     // Invalidate layout if drill-down changed the root.
@@ -802,6 +830,8 @@ mod tests {
         assert!(app.scan_start.is_none());
         assert!(app.last_live_recompute.is_none());
         assert_eq!(app.live_node_count, 0);
+        assert!(app.custom_commands.is_empty());
+        assert!(!app.command_editor.show);
     }
 
     #[test]
