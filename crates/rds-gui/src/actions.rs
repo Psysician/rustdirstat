@@ -187,6 +187,7 @@ pub(crate) fn show_custom_commands_menu(
     tree: &DirTree,
     index: usize,
     commands: &[CustomCommand],
+    notifications: &mut crate::notifications::Notifications,
 ) {
     if commands.is_empty() {
         return;
@@ -194,7 +195,9 @@ pub(crate) fn show_custom_commands_menu(
     ui.separator();
     for command in commands {
         if ui.button(&command.name).clicked() {
-            let _ = execute_custom_command(tree, index, command);
+            if let Err(e) = execute_custom_command(tree, index, command) {
+                notifications.error(format!("{}: {e}", command.name));
+            }
             ui.close();
         }
     }

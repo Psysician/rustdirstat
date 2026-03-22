@@ -14,6 +14,7 @@ pub(crate) fn show(
     scan_complete: bool,
     pending_delete: &mut Option<PendingDelete>,
     custom_commands: &[CustomCommand],
+    notifications: &mut crate::notifications::Notifications,
     ui: &mut egui::Ui,
 ) {
     let total_wasted: u64 = groups.iter().map(|g| g.wasted_bytes).sum();
@@ -56,7 +57,9 @@ pub(crate) fn show(
                         if scan_complete {
                             response.interact(egui::Sense::click()).context_menu(|ui| {
                                 if ui.button("Open in File Manager").clicked() {
-                                    let _ = crate::actions::open_in_file_manager(tree, idx);
+                                    if let Err(e) = crate::actions::open_in_file_manager(tree, idx) {
+                                        notifications.error(format!("Failed to open: {e}"));
+                                    }
                                     ui.close();
                                 }
                                 crate::actions::show_custom_commands_menu(
@@ -64,6 +67,7 @@ pub(crate) fn show(
                                     tree,
                                     idx,
                                     custom_commands,
+                                    notifications,
                                 );
                                 ui.separator();
                                 if ui.button("Delete").clicked() {

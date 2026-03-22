@@ -226,6 +226,7 @@ pub(crate) fn show_dialog(
     tree: Option<&rds_core::tree::DirTree>,
     treemap_root: usize,
     duplicate_groups: &[crate::DuplicateGroup],
+    notifications: &mut crate::notifications::Notifications,
     ctx: &egui::Context,
 ) {
     if !state.show {
@@ -304,7 +305,7 @@ pub(crate) fn show_dialog(
                     .add_filter(filter_name, &[filter_ext])
                     .save_file()
                 {
-                    state.last_result = Some(match tree {
+                    let result = match tree {
                         Some(t) => match state.scope {
                             ExportScope::DuplicatesOnly => {
                                 export_duplicates(t, duplicate_groups, state.format, &path)
@@ -315,7 +316,11 @@ pub(crate) fn show_dialog(
                             ExportScope::FullTree => export_tree(t, t.root(), state.format, &path),
                         },
                         None => ExportResult::Error("No scan data available.".to_string()),
-                    });
+                    };
+                    if let ExportResult::Error(ref msg) = result {
+                        notifications.error(msg.clone());
+                    }
+                    state.last_result = Some(result);
                 }
             }
 

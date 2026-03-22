@@ -654,6 +654,7 @@ impl eframe::App for RustDirStatApp {
             self.tree.as_ref(),
             self.treemap_root,
             &self.duplicate_groups,
+            &mut self.notifications,
             ctx,
         );
 
@@ -857,6 +858,7 @@ impl eframe::App for RustDirStatApp {
                         scan_complete,
                         &mut self.pending_delete,
                         &self.custom_commands,
+                        &mut self.notifications,
                         ui,
                     );
                 });
@@ -888,6 +890,7 @@ impl eframe::App for RustDirStatApp {
                             &mut self.pending_delete,
                             &self.custom_commands,
                             self.default_sort,
+                            &mut self.notifications,
                             ui,
                         );
                     }
@@ -971,6 +974,7 @@ impl eframe::App for RustDirStatApp {
                         scan_complete,
                         &mut self.pending_delete,
                         &self.custom_commands,
+                        &mut self.notifications,
                         ui,
                     );
                     // Invalidate layout if drill-down changed the root.

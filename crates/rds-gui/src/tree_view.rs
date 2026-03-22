@@ -175,6 +175,7 @@ pub(crate) fn show(
     pending_delete: &mut Option<PendingDelete>,
     custom_commands: &[CustomCommand],
     sort_order: SortOrder,
+    notifications: &mut crate::notifications::Notifications,
     ui: &mut egui::Ui,
 ) {
     // Detect external selection change (e.g., treemap click).
@@ -198,6 +199,7 @@ pub(crate) fn show(
             pending_delete,
             custom_commands,
             sort_order,
+            notifications,
             ui,
             0,
         );
@@ -218,6 +220,7 @@ fn render_node(
     pending_delete: &mut Option<PendingDelete>,
     custom_commands: &[CustomCommand],
     sort_order: SortOrder,
+    notifications: &mut crate::notifications::Notifications,
     ui: &mut egui::Ui,
     depth: usize,
 ) {
@@ -280,10 +283,12 @@ fn render_node(
         if scan_complete {
             response.interact(egui::Sense::click()).context_menu(|ui| {
                 if ui.button("Open in File Manager").clicked() {
-                    let _ = crate::actions::open_in_file_manager(tree, index);
+                    if let Err(e) = crate::actions::open_in_file_manager(tree, index) {
+                        notifications.error(format!("Failed to open: {e}"));
+                    }
                     ui.close();
                 }
-                crate::actions::show_custom_commands_menu(ui, tree, index, custom_commands);
+                crate::actions::show_custom_commands_menu(ui, tree, index, custom_commands, notifications);
                 if index != tree.root() {
                     ui.separator();
                     if ui.button("Delete").clicked() {
@@ -316,6 +321,7 @@ fn render_node(
                 pending_delete,
                 custom_commands,
                 sort_order,
+                notifications,
                 ui,
                 depth + 1,
             );
