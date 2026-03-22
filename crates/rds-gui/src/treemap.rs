@@ -444,8 +444,12 @@ pub(crate) fn show(
     let offset = response.rect.min.to_vec2();
 
     // Helper: dim a color to 30% brightness when extension filter is active
-    // and the node doesn't match. (ref: DL-002)
+    // and the node doesn't match. Aggregated "other" rects keep their neutral
+    // gray to remain visible as landmarks. (ref: DL-002)
     let effective_color = |rect_info: &TreemapRect| -> egui::Color32 {
+        if rect_info.node_index == usize::MAX {
+            return rect_info.color;
+        }
         if let Some(ext) = highlighted_extension {
             let matches = tree
                 .get(rect_info.node_index)
@@ -524,7 +528,7 @@ pub(crate) fn show(
             #[allow(deprecated)]
             egui::show_tooltip_at_pointer(ui.ctx(), ui.layer_id(), response.id.with("tip"), |ui| {
                 ui.label(format!(
-                    "{count} files ({} total)",
+                    "{count} items ({} total)",
                     crate::format_bytes(bytes)
                 ));
             });
