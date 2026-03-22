@@ -247,7 +247,8 @@ impl Scanner {
             let _scan_guard = scan_span.enter();
 
             let start = Instant::now();
-            let mut path_to_index: HashMap<PathBuf, usize> = HashMap::new();
+            let mut path_to_index: HashMap<PathBuf, usize> =
+                HashMap::with_capacity(config.max_nodes.unwrap_or(100_000));
             // path_to_index is only accessed from this thread (the jwalk result
             // iterator runs on the calling thread); process_read_dir callbacks run
             // on rayon threads and never touch it, so no synchronization is needed.
@@ -277,7 +278,7 @@ impl Scanner {
             };
 
             let mut file_entries = if config.hash_duplicates {
-                Some(Vec::new())
+                Some(Vec::with_capacity(config.max_nodes.unwrap_or(100_000)))
             } else {
                 None
             };
