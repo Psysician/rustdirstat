@@ -84,6 +84,8 @@ pub struct RustDirStatApp {
     path_input: String,
     /// Validation error shown in toolbar when user enters an invalid path.
     path_error: Option<String>,
+    /// Pre-allocation capacity hint for DirTree arena, derived from ScanConfig.
+    tree_capacity_hint: usize,
     /// Accumulated scan errors with path and message detail, capped at 1000.
     scan_error_log: error_log::ScanErrorLog,
     /// When the current scan began, for elapsed time and rate calculation.
@@ -187,6 +189,7 @@ impl RustDirStatApp {
             initial_path,
             path_input: String::new(),
             path_error: None,
+            tree_capacity_hint: 100_000,
             scan_error_log: error_log::ScanErrorLog::default(),
             scan_start: None,
             last_live_recompute: None,
@@ -288,6 +291,7 @@ impl RustDirStatApp {
             follow_symlinks: self.follow_symlinks,
             ..ScanConfig::default()
         };
+        self.tree_capacity_hint = config.max_nodes.unwrap_or(100_000);
 
         let handle = rds_scanner::Scanner::scan(config, tx, cancel.clone());
 
@@ -345,7 +349,10 @@ impl RustDirStatApp {
                     match parent_index {
                         None => {
                             // First event: create the tree with root node.
-                            self.tree = Some(DirTree::from_root(node));
+                            self.tree = Some(DirTree::from_root_with_capacity(
+                                node,
+                                self.tree_capacity_hint,
+                            ));
                         }
                         Some(pidx) => {
                             if let Some(ref mut t) = self.tree {
