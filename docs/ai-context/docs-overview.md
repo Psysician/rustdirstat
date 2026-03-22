@@ -21,9 +21,10 @@ Registry of all project documentation, classified by tier for navigation.
 | `crates/rds-core/CLAUDE.md` | Core crate AI context: file guide, module structure, zero-dep constraint |
 | `crates/rds-core/README.md` | Arena invariants, index stability contract, append-only design rationale |
 | `crates/rds-core/src/CLAUDE.md` | Core source files index: tree, scan, config, stats modules |
-| `crates/rds-scanner/CLAUDE.md` | Scanner crate AI context: jwalk parallel traversal, event streaming |
+| `crates/rds-scanner/CLAUDE.md` | Scanner crate AI context: jwalk parallel traversal, exclude pattern filtering, event streaming |
 | `crates/rds-scanner/README.md` | Ordering invariant, two-level abort design, skip_hidden parity, error sources |
-| `crates/rds-gui/CLAUDE.md` | GUI crate AI context: dir picker, scanner integration, tree view, panel layout |
+| `crates/rds-gui/CLAUDE.md` | GUI crate AI context: dir picker, scanner integration, tree view, panel layout, settings dialog, config persistence |
+| `crates/rds-gui/src/CLAUDE.md` | GUI source files index: lib, tree_view, ext_stats, treemap, duplicates, actions, command_editor, export, settings |
 | `docs/CLAUDE.md` | Documentation directory index |
 | `plans/CLAUDE.md` | Implementation plans directory index |
 
@@ -47,6 +48,7 @@ Registry of all project documentation, classified by tier for navigation.
 | `docs/superpowers/plans/2026-03-21-ms14-open-in-file-manager.md` | MS14 implementation plan: open crate, platform-specific file reveal (completed) |
 | `docs/superpowers/plans/2026-03-21-ms15-custom-commands.md` | MS15 implementation plan: custom shell commands, command editor UI, context menu integration (completed) |
 | `docs/superpowers/plans/2026-03-22-ms16-csv-json-export.md` | MS16 implementation plan: CSV/JSON export, export dialog, format/scope selection, rfd save dialog (completed) |
+| `docs/superpowers/plans/2026-03-22-ms17-configuration-persistence.md` | MS17 implementation plan: TOML config persistence, settings dialog, recent paths, exclude pattern filtering, auto-save (in dev) |
 
 ## Cross-Reference Map
 
@@ -69,3 +71,7 @@ Registry of all project documentation, classified by tier for navigation.
 | Duplicate detection | `crates/rds-scanner/src/duplicate.rs` | `scan.rs` (DuplicateFound event), `duplicates.rs` (GUI panel) |
 | CSV/JSON export | `crates/rds-gui/src/export.rs` | `lib.rs` (ExportDialogState), design spec (export to CSV/JSON) |
 | Custom commands | `crates/rds-gui/src/actions.rs` | `command_editor.rs` (editor UI), `lib.rs` (CommandEditorState) |
+| Config persistence | `src/main.rs` (load/save) | `config.rs` (AppConfig), `lib.rs` (collect_config/save_config/on_exit) |
+| Settings dialog | `crates/rds-gui/src/settings.rs` | `lib.rs` (SettingsDialogState), `config.rs` (AppConfig fields) |
+| Exclude pattern filtering | `crates/rds-scanner/src/scanner.rs` | `config.rs` (exclude_patterns), `lib.rs` (pass to ScanConfig) |
+| Recent paths | `crates/rds-gui/src/lib.rs` | `config.rs` (recent_paths, max_recent_paths) |

@@ -18,8 +18,8 @@ Cross-platform disk usage analyzer. 4-crate Cargo workspace.
 | Directory | What | When to read |
 | --------- | ---- | ------------ |
 | `crates/rds-core/` | Shared data types; zero deps beyond `serde` | Modifying core types, understanding arena tree layout |
-| `crates/rds-scanner/` | Parallel filesystem traversal via `jwalk`; streams `ScanEvent` over bounded channel to receiver | Implementing scan logic, modifying scanner-GUI communication |
-| `crates/rds-gui/` | egui/eframe GUI: tree view, treemap, ext stats, duplicates, delete/open/command actions, CSV/JSON export | Implementing UI panels, modifying the eframe app struct, adding actions or export |
+| `crates/rds-scanner/` | Parallel filesystem traversal via `jwalk` with glob-based exclude filtering; streams `ScanEvent` over bounded channel | Implementing scan logic, modifying scanner-GUI communication, modifying exclude patterns |
+| `crates/rds-gui/` | egui/eframe GUI: tree view, treemap, ext stats, duplicates, actions, export, settings dialog, config persistence, recent paths | Implementing UI panels, modifying the eframe app struct, adding actions or settings |
 | `.github/workflows/` | GitHub Actions CI (build/test/clippy/fmt on 3 platforms) | Modifying CI, debugging pipeline failures |
 | `docs/` | Project-level documentation (milestones roadmap) | Understanding planned feature scope |
 | `plans/` | Milestone implementation plans with decision logs | Reviewing design decisions, understanding why code is structured as it is |
