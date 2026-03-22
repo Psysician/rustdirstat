@@ -1,9 +1,10 @@
-//! File actions for the GUI (delete, open in file manager).
+//! File actions for the GUI (delete, open in file manager, custom commands).
 //!
 //! `execute_delete` sends a file/directory to the OS trash and tombstones the
 //! arena node. `cleanup_duplicate_groups` prunes stale entries from duplicate
 //! groups after deletions. `open_in_file_manager` reveals a file or directory
-//! in the platform's native file manager.
+//! in the platform's native file manager. `execute_custom_command` runs a
+//! user-defined shell command with `{path}` placeholder substitution.
 
 use rds_core::CustomCommand;
 use rds_core::tree::DirTree;
@@ -258,8 +259,6 @@ mod tests {
     #[test]
     #[ignore]
     fn execute_custom_command_substitutes_path() {
-        use rds_core::CustomCommand;
-
         let tmp = tempfile::TempDir::new().unwrap();
         let root_path = tmp.path();
 
@@ -277,8 +276,6 @@ mod tests {
 
     #[test]
     fn execute_custom_command_invalid_index_returns_error() {
-        use rds_core::CustomCommand;
-
         let tree = DirTree::new("/some/root");
         let cmd = CustomCommand {
             name: "Test".to_string(),
