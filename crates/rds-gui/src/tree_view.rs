@@ -252,11 +252,21 @@ fn render_node(
 
         // Build label: name + size + file count (dirs only).
         let size = stats.size(index);
+        let is_empty_dir = is_dir
+            && tree
+                .children(index)
+                .iter()
+                .all(|&c| !tree.get(c).is_some_and(|n| !n.deleted));
+        let display_name = if is_empty_dir {
+            format!("{} (empty)", node.name)
+        } else {
+            node.name.clone()
+        };
         let label_text = if is_dir {
             let count = stats.file_count(index);
             format!(
                 "{}  {}  ({} files)",
-                node.name,
+                display_name,
                 super::format_bytes(size),
                 count,
             )
@@ -264,7 +274,12 @@ fn render_node(
             format!("{}  {}", node.name, super::format_bytes(size))
         };
 
-        let response = ui.selectable_label(is_selected, &label_text);
+        let rich_label = if is_empty_dir {
+            egui::RichText::new(&label_text).color(egui::Color32::GRAY)
+        } else {
+            egui::RichText::new(&label_text)
+        };
+        let response = ui.selectable_label(is_selected, rich_label);
         if response.clicked() {
             *selected = Some(index);
             // Update sync tracker immediately so show() doesn't treat this as
