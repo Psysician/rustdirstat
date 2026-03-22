@@ -33,6 +33,15 @@ run:
 check:
     cargo check --workspace
 
+# Run benchmarks
+bench:
+    cargo bench -p rds-core
+    cargo bench -p rds-gui --features bench-internals
+
+# Open benchmark report in browser
+bench-report:
+    open target/criterion/report/index.html
+
 # Remove build artifacts
 clean:
     cargo clean

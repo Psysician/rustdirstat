@@ -23,5 +23,14 @@ serde_json = { workspace = true }
 csv = { workspace = true }
 egui-notify = { workspace = true }
 
+[features]
+bench-internals = []
+
 [dev-dependencies]
 tempfile = { workspace = true }
+criterion = { workspace = true }
+
+[[bench]]
+name = "treemap_bench"
+harness = false
+required-features = ["bench-internals"]
