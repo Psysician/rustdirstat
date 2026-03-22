@@ -26,7 +26,7 @@ pub(crate) fn show(
                     ui.add(egui::TextEdit::singleline(&mut cmd.name).hint_text("Name"));
                     ui.add(
                         egui::TextEdit::singleline(&mut cmd.template)
-                            .hint_text("Template (use \"{path}\" with quotes)"),
+                            .hint_text("Template (e.g. ls -la {path})"),
                     );
                     if ui.button("Remove").clicked() {
                         to_remove.push(i);
@@ -40,13 +40,13 @@ pub(crate) fn show(
                 ui.add(egui::TextEdit::singleline(&mut editor.new_name).hint_text("Name"));
                 ui.add(
                     egui::TextEdit::singleline(&mut editor.new_template)
-                        .hint_text("Template (use \"{path}\" with quotes)"),
+                        .hint_text("Template (e.g. ls -la {path})"),
                 );
                 let can_add = !editor.new_name.is_empty() && !editor.new_template.is_empty();
                 if ui.add_enabled(can_add, egui::Button::new("Add")).clicked() {
                     commands.push(CustomCommand {
-                        name: editor.new_name.drain(..).collect(),
-                        template: editor.new_template.drain(..).collect(),
+                        name: std::mem::take(&mut editor.new_name),
+                        template: std::mem::take(&mut editor.new_template),
                     });
                 }
             });

@@ -254,15 +254,7 @@ fn render_node(
                     let _ = crate::actions::open_in_file_manager(tree, index);
                     ui.close();
                 }
-                if !custom_commands.is_empty() {
-                    ui.separator();
-                    for command in custom_commands {
-                        if ui.button(&command.name).clicked() {
-                            let _ = crate::actions::execute_custom_command(tree, index, command);
-                            ui.close();
-                        }
-                    }
-                }
+                crate::actions::show_custom_commands_menu(ui, tree, index, custom_commands);
                 if index != tree.root() {
                     ui.separator();
                     if ui.button("Delete").clicked() {

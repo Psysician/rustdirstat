@@ -59,17 +59,12 @@ pub(crate) fn show(
                                     let _ = crate::actions::open_in_file_manager(tree, idx);
                                     ui.close();
                                 }
-                                if !custom_commands.is_empty() {
-                                    ui.separator();
-                                    for command in custom_commands {
-                                        if ui.button(&command.name).clicked() {
-                                            let _ = crate::actions::execute_custom_command(
-                                                tree, idx, command,
-                                            );
-                                            ui.close();
-                                        }
-                                    }
-                                }
+                                crate::actions::show_custom_commands_menu(
+                                    ui,
+                                    tree,
+                                    idx,
+                                    custom_commands,
+                                );
                                 ui.separator();
                                 if ui.button("Delete").clicked() {
                                     let size = tree.get(idx).map(|n| n.size).unwrap_or(0);
