@@ -256,7 +256,7 @@ fn render_node(
             && tree
                 .children(index)
                 .iter()
-                .all(|&c| !tree.get(c).is_some_and(|n| !n.deleted));
+                .all(|&c| tree.get(c).is_none_or(|n| n.deleted));
         let display_name = if is_empty_dir {
             format!("{} (empty)", node.name)
         } else {
@@ -303,7 +303,13 @@ fn render_node(
                     }
                     ui.close();
                 }
-                crate::actions::show_custom_commands_menu(ui, tree, index, custom_commands, notifications);
+                crate::actions::show_custom_commands_menu(
+                    ui,
+                    tree,
+                    index,
+                    custom_commands,
+                    notifications,
+                );
                 if index != tree.root() {
                     ui.separator();
                     if ui.button("Delete").clicked() {

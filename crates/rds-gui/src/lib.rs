@@ -591,9 +591,7 @@ impl eframe::App for RustDirStatApp {
                         "The scan was stopped because the node limit (10,000,000) was reached.",
                     );
                     ui.label("Partial results are still available below.");
-                    ui.label(
-                        "For more detailed analysis, try scanning a subdirectory instead.",
-                    );
+                    ui.label("For more detailed analysis, try scanning a subdirectory instead.");
                     ui.separator();
                     if ui.button("OK").clicked() {
                         self.max_nodes_dialog = false;

@@ -15,12 +15,12 @@ impl Default for Notifications {
 }
 
 impl Notifications {
+    #[allow(dead_code)]
     pub(crate) fn info(&mut self, msg: impl Into<egui::WidgetText>) {
-        self.toasts
-            .info(msg)
-            .duration(Some(Duration::from_secs(3)));
+        self.toasts.info(msg).duration(Some(Duration::from_secs(3)));
     }
 
+    #[allow(dead_code)]
     pub(crate) fn warning(&mut self, msg: impl Into<egui::WidgetText>) {
         self.toasts
             .warning(msg)

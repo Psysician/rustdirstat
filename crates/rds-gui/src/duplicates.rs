@@ -7,6 +7,7 @@ use crate::{DuplicateGroup, PendingDelete, format_bytes};
 use rds_core::CustomCommand;
 use rds_core::tree::DirTree;
 
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn show(
     groups: &[DuplicateGroup],
     tree: &DirTree,
@@ -57,7 +58,8 @@ pub(crate) fn show(
                         if scan_complete {
                             response.interact(egui::Sense::click()).context_menu(|ui| {
                                 if ui.button("Open in File Manager").clicked() {
-                                    if let Err(e) = crate::actions::open_in_file_manager(tree, idx) {
+                                    if let Err(e) = crate::actions::open_in_file_manager(tree, idx)
+                                    {
                                         notifications.error(format!("Failed to open: {e}"));
                                     }
                                     ui.close();

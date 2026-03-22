@@ -1,17 +1,9 @@
 use std::path::PathBuf;
 
+#[derive(Default)]
 pub(crate) struct ScanErrorLog {
     entries: Vec<(PathBuf, String)>,
     overflow_count: u64,
-}
-
-impl Default for ScanErrorLog {
-    fn default() -> Self {
-        Self {
-            entries: Vec::new(),
-            overflow_count: 0,
-        }
-    }
 }
 
 impl ScanErrorLog {
@@ -40,10 +32,7 @@ impl ScanErrorLog {
 }
 
 pub(crate) fn show(log: &ScanErrorLog, ui: &mut egui::Ui) {
-    ui.label(
-        egui::RichText::new(format!("{} scan errors", log.total_count()))
-            .strong(),
-    );
+    ui.label(egui::RichText::new(format!("{} scan errors", log.total_count())).strong());
     ui.separator();
 
     egui::ScrollArea::vertical()
@@ -55,10 +44,7 @@ pub(crate) fn show(log: &ScanErrorLog, ui: &mut egui::Ui) {
                         .monospace()
                         .strong(),
                 );
-                ui.label(
-                    egui::RichText::new(error)
-                        .weak(),
-                );
+                ui.label(egui::RichText::new(error).weak());
                 ui.add_space(4.0);
             }
             if log.overflow_count > 0 {
@@ -82,10 +68,7 @@ mod tests {
     fn push_and_cap_behavior() {
         let mut log = ScanErrorLog::default();
         for i in 0..1005 {
-            log.push(
-                PathBuf::from(format!("/path/{i}")),
-                format!("error {i}"),
-            );
+            log.push(PathBuf::from(format!("/path/{i}")), format!("error {i}"));
         }
         assert_eq!(log.total_count(), 1005);
         assert_eq!(log.entries.len(), 1000);
@@ -96,10 +79,7 @@ mod tests {
     fn clear_resets_state() {
         let mut log = ScanErrorLog::default();
         for i in 0..3 {
-            log.push(
-                PathBuf::from(format!("/path/{i}")),
-                format!("error {i}"),
-            );
+            log.push(PathBuf::from(format!("/path/{i}")), format!("error {i}"));
         }
         log.clear();
         assert_eq!(log.total_count(), 0);

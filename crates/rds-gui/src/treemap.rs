@@ -485,7 +485,13 @@ pub(crate) fn show(
                     }
                     ui.close();
                 }
-                crate::actions::show_custom_commands_menu(ui, tree, sel_idx, custom_commands, notifications);
+                crate::actions::show_custom_commands_menu(
+                    ui,
+                    tree,
+                    sel_idx,
+                    custom_commands,
+                    notifications,
+                );
                 if sel_idx != tree.root() {
                     ui.separator();
                     if ui.button("Delete").clicked() {
