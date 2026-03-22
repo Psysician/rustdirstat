@@ -550,8 +550,9 @@ impl eframe::App for RustDirStatApp {
 
                 // Text input fallback — always works, including WSL2.
                 // Reserve space for: Scan button (~50px) + separator (~10px) +
-                // Detect Duplicates checkbox (~150px).
-                const TOOLBAR_FIXED_CONTROLS_WIDTH: f32 = 210.0;
+                // Detect Duplicates checkbox (~150px) + separator (~10px) +
+                // Commands button (~90px).
+                const TOOLBAR_FIXED_CONTROLS_WIDTH: f32 = 310.0;
                 let text_width = (ui.available_width() - TOOLBAR_FIXED_CONTROLS_WIDTH).max(100.0);
                 let response = ui.add(
                     egui::TextEdit::singleline(&mut self.path_input)
@@ -581,6 +582,11 @@ impl eframe::App for RustDirStatApp {
 
                 ui.separator();
                 ui.checkbox(&mut self.hash_duplicates_enabled, "Detect Duplicates");
+
+                ui.separator();
+                if ui.button("Commands...").clicked() {
+                    self.command_editor.show = !self.command_editor.show;
+                }
             });
         });
 
