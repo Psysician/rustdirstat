@@ -109,55 +109,25 @@ pub(crate) fn export_tree(
             extension: node.extension.clone().unwrap_or_default(),
             modified_timestamp: node.modified,
         });
-        for &child_idx in tree.children(index) {
+        for &child_idx in tree.children(index).iter().rev() {
             stack.push(child_idx);
         }
     }
 
-    let file = match std::fs::File::create(output_path) {
-        Ok(f) => f,
-        Err(e) => return ExportResult::Error(e.to_string()),
-    };
-
-    let record_count = records.len();
-    let path_string = output_path.to_string_lossy().to_string();
-
-    match format {
-        ExportFormat::Csv => {
-            let mut writer = csv::Writer::from_writer(file);
-            if records.is_empty()
-                && let Err(e) = writer.write_record([
-                    "path",
-                    "name",
-                    "size_bytes",
-                    "size_human",
-                    "is_dir",
-                    "extension",
-                    "modified_timestamp",
-                ])
-            {
-                return ExportResult::Error(e.to_string());
-            }
-            for record in &records {
-                if let Err(e) = writer.serialize(record) {
-                    return ExportResult::Error(e.to_string());
-                }
-            }
-            if let Err(e) = writer.flush() {
-                return ExportResult::Error(e.to_string());
-            }
-        }
-        ExportFormat::Json => {
-            if let Err(e) = serde_json::to_writer_pretty(file, &records) {
-                return ExportResult::Error(e.to_string());
-            }
-        }
-    }
-
-    ExportResult::Success {
-        path: path_string,
-        record_count,
-    }
+    write_records(
+        &records,
+        format,
+        output_path,
+        &[
+            "path",
+            "name",
+            "size_bytes",
+            "size_human",
+            "is_dir",
+            "extension",
+            "modified_timestamp",
+        ],
+    )
 }
 
 pub(crate) fn export_duplicates(
@@ -190,6 +160,28 @@ pub(crate) fn export_duplicates(
         }
     }
 
+    write_records(
+        &records,
+        format,
+        output_path,
+        &[
+            "group_number",
+            "path",
+            "name",
+            "size_bytes",
+            "size_human",
+            "extension",
+            "wasted_bytes_in_group",
+        ],
+    )
+}
+
+fn write_records<T: serde::Serialize>(
+    records: &[T],
+    format: ExportFormat,
+    output_path: &std::path::Path,
+    empty_csv_headers: &[&str],
+) -> ExportResult {
     let file = match std::fs::File::create(output_path) {
         Ok(f) => f,
         Err(e) => return ExportResult::Error(e.to_string()),
@@ -202,19 +194,11 @@ pub(crate) fn export_duplicates(
         ExportFormat::Csv => {
             let mut writer = csv::Writer::from_writer(file);
             if records.is_empty()
-                && let Err(e) = writer.write_record([
-                    "group_number",
-                    "path",
-                    "name",
-                    "size_bytes",
-                    "size_human",
-                    "extension",
-                    "wasted_bytes_in_group",
-                ])
+                && let Err(e) = writer.write_record(empty_csv_headers)
             {
                 return ExportResult::Error(e.to_string());
             }
-            for record in &records {
+            for record in records {
                 if let Err(e) = writer.serialize(record) {
                     return ExportResult::Error(e.to_string());
                 }
@@ -224,7 +208,8 @@ pub(crate) fn export_duplicates(
             }
         }
         ExportFormat::Json => {
-            if let Err(e) = serde_json::to_writer_pretty(file, &records) {
+            let buf = std::io::BufWriter::new(file);
+            if let Err(e) = serde_json::to_writer_pretty(buf, &records) {
                 return ExportResult::Error(e.to_string());
             }
         }
