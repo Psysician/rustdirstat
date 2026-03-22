@@ -145,6 +145,8 @@ pub struct RustDirStatApp {
     max_recent_paths: usize,
     /// Whether the scanner should follow symbolic links.
     follow_symlinks: bool,
+    /// Whether to show the max-nodes limit dialog.
+    max_nodes_dialog: bool,
     /// Toast notification overlay.
     notifications: notifications::Notifications,
     /// Optional callback invoked to persist config changes to disk.
@@ -212,6 +214,7 @@ impl RustDirStatApp {
             color_scheme: config.color_scheme,
             max_recent_paths: config.max_recent_paths,
             follow_symlinks: config.follow_symlinks,
+            max_nodes_dialog: false,
             notifications: notifications::Notifications::default(),
             config_save_fn: None,
         }
@@ -270,6 +273,7 @@ impl RustDirStatApp {
         self.delete_error = None;
         self.path_error = None;
         self.export_dialog.last_result = None;
+        self.max_nodes_dialog = false;
         self.phase = ScanPhase::Scanning;
         self.scan_path = Some(path.clone());
         self.track_recent_path(path.clone());
@@ -362,7 +366,10 @@ impl RustDirStatApp {
                     return;
                 }
                 Ok(ScanEvent::ScanError { path, error }) => {
-                    self.scan_error_log.push(path, error);
+                    self.scan_error_log.push(path, error.clone());
+                    if error.contains("max_nodes limit") {
+                        self.max_nodes_dialog = true;
+                    }
                 }
                 Ok(ScanEvent::DuplicateFound { node_indices, .. }) => {
                     let size = node_indices
@@ -571,6 +578,27 @@ impl eframe::App for RustDirStatApp {
             self.drain_events();
             self.maybe_live_recompute();
             ctx.request_repaint();
+        }
+
+        // --- Max-nodes limit dialog ---
+        if self.max_nodes_dialog {
+            egui::Window::new("Scan Limit Reached")
+                .collapsible(false)
+                .resizable(false)
+                .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
+                .show(ctx, |ui| {
+                    ui.label(
+                        "The scan was stopped because the node limit (10,000,000) was reached.",
+                    );
+                    ui.label("Partial results are still available below.");
+                    ui.label(
+                        "For more detailed analysis, try scanning a subdirectory instead.",
+                    );
+                    ui.separator();
+                    if ui.button("OK").clicked() {
+                        self.max_nodes_dialog = false;
+                    }
+                });
         }
 
         // --- Confirmation dialog ---
@@ -996,6 +1024,7 @@ mod tests {
         assert!(app.pending_delete.is_none());
         assert_eq!(app.freed_bytes, 0);
         assert!(app.delete_error.is_none());
+        assert!(!app.max_nodes_dialog);
         assert!(app.path_error.is_none());
         assert!(app.scan_path.is_none());
         assert!(app.path_input.is_empty());
