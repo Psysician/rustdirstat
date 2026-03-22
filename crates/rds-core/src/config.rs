@@ -8,12 +8,15 @@ pub struct CustomCommand {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(default)]
 pub struct AppConfig {
     pub exclude_patterns: Vec<String>,
     pub custom_commands: Vec<CustomCommand>,
     pub color_scheme: String,
     pub default_sort: String,
     pub recent_paths: Vec<PathBuf>,
+    pub max_recent_paths: usize,
+    pub follow_symlinks: bool,
 }
 
 impl Default for AppConfig {
@@ -24,6 +27,8 @@ impl Default for AppConfig {
             color_scheme: "default".to_string(),
             default_sort: "size_desc".to_string(),
             recent_paths: Vec::new(),
+            max_recent_paths: 10,
+            follow_symlinks: false,
         }
     }
 }
@@ -53,6 +58,8 @@ mod tests {
             color_scheme: "dark".to_string(),
             default_sort: "name_asc".to_string(),
             recent_paths: vec![PathBuf::from("/home/user/docs")],
+            max_recent_paths: 10,
+            follow_symlinks: false,
         };
         let json = serde_json::to_string(&config).unwrap();
         let deserialized: AppConfig = serde_json::from_str(&json).unwrap();
@@ -66,5 +73,26 @@ mod tests {
             deserialized.custom_commands[0].template,
             "cd {path} && bash"
         );
+    }
+
+    #[test]
+    fn new_fields_serde_roundtrip() {
+        let config = AppConfig {
+            max_recent_paths: 25,
+            follow_symlinks: true,
+            ..AppConfig::default()
+        };
+        let json = serde_json::to_string(&config).unwrap();
+        let deserialized: AppConfig = serde_json::from_str(&json).unwrap();
+        assert_eq!(deserialized.max_recent_paths, 25);
+        assert!(deserialized.follow_symlinks);
+    }
+
+    #[test]
+    fn missing_new_fields_deserialize_with_defaults() {
+        let json = r#"{"exclude_patterns":[],"custom_commands":[],"color_scheme":"default","default_sort":"size_desc","recent_paths":[]}"#;
+        let deserialized: AppConfig = serde_json::from_str(json).unwrap();
+        assert_eq!(deserialized.max_recent_paths, 10);
+        assert!(!deserialized.follow_symlinks);
     }
 }
