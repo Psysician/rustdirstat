@@ -136,9 +136,9 @@ pub struct RustDirStatApp {
     /// Recently scanned paths for quick re-access.
     recent_paths: Vec<PathBuf>,
     /// Default sort order for tree/stats panels.
-    default_sort: String,
+    default_sort: rds_core::SortOrder,
     /// Active color scheme name.
-    color_scheme: String,
+    color_scheme: rds_core::ColorScheme,
     /// Maximum number of recent paths to retain.
     max_recent_paths: usize,
     /// Whether the scanner should follow symbolic links.
@@ -151,6 +151,10 @@ pub struct RustDirStatApp {
 impl Default for RustDirStatApp {
     /// Delegates to `new(None, AppConfig::default())` for backward compatibility
     /// with callers that construct via Default. (ref: DL-007)
+    ///
+    /// Note: `config_save_fn` is `None`, so config changes are not persisted.
+    /// Call [`set_config_save_fn`](Self::set_config_save_fn) after construction
+    /// if persistence is required.
     fn default() -> Self {
         Self::new(None, rds_core::AppConfig::default())
     }
@@ -521,8 +525,8 @@ impl RustDirStatApp {
         rds_core::AppConfig {
             custom_commands: self.custom_commands.clone(),
             exclude_patterns: self.exclude_patterns.clone(),
-            color_scheme: self.color_scheme.clone(),
-            default_sort: self.default_sort.clone(),
+            color_scheme: self.color_scheme,
+            default_sort: self.default_sort,
             recent_paths: self.recent_paths.clone(),
             max_recent_paths: self.max_recent_paths,
             follow_symlinks: self.follow_symlinks,
@@ -626,9 +630,12 @@ impl eframe::App for RustDirStatApp {
             &mut self.exclude_patterns,
             &mut self.default_sort,
             &mut self.color_scheme,
+            &mut self.follow_symlinks,
+            &mut self.max_recent_paths,
             ctx,
         );
         if settings_applied {
+            self.recent_paths.truncate(self.max_recent_paths);
             self.save_config();
         }
 
@@ -663,11 +670,19 @@ impl eframe::App for RustDirStatApp {
                 ui.separator();
 
                 // Text input fallback — always works, including WSL2.
-                // Reserve space for: Scan button (~50px) + separator (~10px) +
-                // Detect Duplicates checkbox (~150px) + separator (~10px) +
-                // Commands button (~90px) + Settings button (~80px) +
-                // separator (~10px) + Export button (~70px).
-                const TOOLBAR_FIXED_CONTROLS_WIDTH: f32 = 550.0;
+                // Reserve space for right-side controls. Per-button estimates:
+                const BTN_SCAN: f32 = 50.0;
+                const BTN_DETECT_DUPES: f32 = 150.0;
+                const BTN_COMMANDS: f32 = 90.0;
+                const BTN_SETTINGS: f32 = 80.0;
+                const BTN_EXPORT: f32 = 70.0;
+                const SEPARATORS: f32 = 40.0; // ~10px each x4
+                const TOOLBAR_FIXED_CONTROLS_WIDTH: f32 = BTN_SCAN
+                    + BTN_DETECT_DUPES
+                    + BTN_COMMANDS
+                    + BTN_SETTINGS
+                    + BTN_EXPORT
+                    + SEPARATORS;
                 let text_width = (ui.available_width() - TOOLBAR_FIXED_CONTROLS_WIDTH).max(100.0);
                 let response = ui.add(
                     egui::TextEdit::singleline(&mut self.path_input)
@@ -706,8 +721,10 @@ impl eframe::App for RustDirStatApp {
                 if ui.button("Settings...").clicked() {
                     if !self.settings_dialog.show {
                         self.settings_dialog.exclude_patterns = self.exclude_patterns.clone();
-                        self.settings_dialog.default_sort = self.default_sort.clone();
-                        self.settings_dialog.color_scheme = self.color_scheme.clone();
+                        self.settings_dialog.default_sort = self.default_sort;
+                        self.settings_dialog.color_scheme = self.color_scheme;
+                        self.settings_dialog.follow_symlinks = self.follow_symlinks;
+                        self.settings_dialog.max_recent_paths = self.max_recent_paths;
                         self.settings_dialog.new_pattern = String::new();
                     }
                     self.settings_dialog.show = !self.settings_dialog.show;
@@ -828,7 +845,7 @@ impl eframe::App for RustDirStatApp {
                             scan_complete,
                             &mut self.pending_delete,
                             &self.custom_commands,
-                            &self.default_sort,
+                            self.default_sort,
                             ui,
                         );
                     }

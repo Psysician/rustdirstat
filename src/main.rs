@@ -99,7 +99,7 @@ fn main() -> eframe::Result {
 
 #[cfg(test)]
 mod tests {
-    use rds_core::AppConfig;
+    use rds_core::{AppConfig, ColorScheme, SortOrder};
 
     #[test]
     fn toml_roundtrip_all_fields() {
@@ -109,8 +109,8 @@ mod tests {
                 name: "Open Editor".to_string(),
                 template: "code {path}".to_string(),
             }],
-            color_scheme: "dark".to_string(),
-            default_sort: "name_asc".to_string(),
+            color_scheme: ColorScheme::Default,
+            default_sort: SortOrder::NameAsc,
             recent_paths: vec![
                 std::path::PathBuf::from("/tmp/test"),
                 std::path::PathBuf::from("/home/user"),
@@ -126,8 +126,8 @@ mod tests {
         assert_eq!(restored.custom_commands.len(), 1);
         assert_eq!(restored.custom_commands[0].name, "Open Editor");
         assert_eq!(restored.custom_commands[0].template, "code {path}");
-        assert_eq!(restored.color_scheme, "dark");
-        assert_eq!(restored.default_sort, "name_asc");
+        assert_eq!(restored.color_scheme, ColorScheme::Default);
+        assert_eq!(restored.default_sort, SortOrder::NameAsc);
         assert_eq!(restored.recent_paths, config.recent_paths);
         assert_eq!(restored.max_recent_paths, 20);
         assert!(restored.follow_symlinks);
@@ -135,13 +135,13 @@ mod tests {
 
     #[test]
     fn toml_missing_fields_use_defaults() {
-        let partial = r#"color_scheme = "dark""#;
+        let partial = r#"color_scheme = "default""#;
         let config: AppConfig = toml::from_str(partial).expect("deserialize partial TOML");
 
-        assert_eq!(config.color_scheme, "dark");
+        assert_eq!(config.color_scheme, ColorScheme::Default);
         assert!(config.exclude_patterns.is_empty());
         assert!(config.custom_commands.is_empty());
-        assert_eq!(config.default_sort, "size_desc");
+        assert_eq!(config.default_sort, SortOrder::SizeDesc);
         assert!(config.recent_paths.is_empty());
         assert_eq!(config.max_recent_paths, 10);
         assert!(!config.follow_symlinks);

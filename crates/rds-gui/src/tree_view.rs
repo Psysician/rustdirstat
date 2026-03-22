@@ -5,9 +5,11 @@
 //! single O(n) bottom-up pass so rendering never re-traverses the
 //! arena. (ref: DL-001)
 
+use std::cmp::Reverse;
 use std::collections::HashSet;
 
 use rds_core::CustomCommand;
+use rds_core::SortOrder;
 use rds_core::tree::DirTree;
 
 use crate::PendingDelete;
@@ -111,15 +113,11 @@ impl TreeViewState {
 }
 
 /// Returns child indices of `index` sorted according to `sort_order`.
-///
-/// Supported modes: `"size_desc"` (largest first), `"size_asc"` (smallest
-/// first), `"name_asc"` (alphabetical), `"name_desc"` (reverse alphabetical).
-/// Unknown values fall back to `"size_desc"`.
 pub(crate) fn sorted_children(
     tree: &DirTree,
     index: usize,
     stats: &SubtreeStats,
-    sort_order: &str,
+    sort_order: SortOrder,
 ) -> Vec<usize> {
     let mut children: Vec<usize> = tree
         .children(index)
@@ -128,18 +126,24 @@ pub(crate) fn sorted_children(
         .filter(|&c| tree.get(c).is_some_and(|n| !n.deleted))
         .collect();
     match sort_order {
-        "size_asc" => children.sort_by(|&a, &b| stats.size(a).cmp(&stats.size(b))),
-        "name_asc" => children.sort_by(|&a, &b| {
-            let na = &tree.get(a).unwrap().name;
-            let nb = &tree.get(b).unwrap().name;
-            na.to_lowercase().cmp(&nb.to_lowercase())
-        }),
-        "name_desc" => children.sort_by(|&a, &b| {
-            let na = &tree.get(a).unwrap().name;
-            let nb = &tree.get(b).unwrap().name;
-            nb.to_lowercase().cmp(&na.to_lowercase())
-        }),
-        _ => children.sort_by(|&a, &b| stats.size(b).cmp(&stats.size(a))),
+        SortOrder::SizeDesc => children.sort_by(|&a, &b| stats.size(b).cmp(&stats.size(a))),
+        SortOrder::SizeAsc => children.sort_by(|&a, &b| stats.size(a).cmp(&stats.size(b))),
+        SortOrder::NameAsc => {
+            children.sort_by_cached_key(|&c| {
+                tree.get(c)
+                    .map(|n| n.name.to_lowercase())
+                    .unwrap_or_default()
+            });
+        }
+        SortOrder::NameDesc => {
+            children.sort_by_cached_key(|&c| {
+                Reverse(
+                    tree.get(c)
+                        .map(|n| n.name.to_lowercase())
+                        .unwrap_or_default(),
+                )
+            });
+        }
     }
     children
 }
@@ -170,7 +174,7 @@ pub(crate) fn show(
     scan_complete: bool,
     pending_delete: &mut Option<PendingDelete>,
     custom_commands: &[CustomCommand],
-    sort_order: &str,
+    sort_order: SortOrder,
     ui: &mut egui::Ui,
 ) {
     // Detect external selection change (e.g., treemap click).
@@ -213,7 +217,7 @@ fn render_node(
     scan_complete: bool,
     pending_delete: &mut Option<PendingDelete>,
     custom_commands: &[CustomCommand],
-    sort_order: &str,
+    sort_order: SortOrder,
     ui: &mut egui::Ui,
     depth: usize,
 ) {
@@ -445,7 +449,7 @@ mod tests {
         tree.insert(0, make_file("medium.txt", 500)); // index 3
 
         let stats = SubtreeStats::compute(&tree);
-        let sorted = sorted_children(&tree, 0, &stats, "size_desc");
+        let sorted = sorted_children(&tree, 0, &stats, SortOrder::SizeDesc);
         assert_eq!(sorted, vec![2, 3, 1]);
     }
 
@@ -458,7 +462,7 @@ mod tests {
         tree.insert(big_dir, make_file("b.txt", 1000)); // index 4
 
         let stats = SubtreeStats::compute(&tree);
-        let sorted = sorted_children(&tree, 0, &stats, "size_desc");
+        let sorted = sorted_children(&tree, 0, &stats, SortOrder::SizeDesc);
         assert_eq!(sorted, vec![3, 1]);
     }
 
@@ -466,7 +470,7 @@ mod tests {
     fn sorted_children_empty_dir() {
         let tree = DirTree::new("/root");
         let stats = SubtreeStats::compute(&tree);
-        let sorted = sorted_children(&tree, 0, &stats, "size_desc");
+        let sorted = sorted_children(&tree, 0, &stats, SortOrder::SizeDesc);
         assert!(sorted.is_empty());
     }
 
@@ -588,7 +592,7 @@ mod tests {
         tree.tombstone(small);
 
         let stats = SubtreeStats::compute(&tree);
-        let sorted = sorted_children(&tree, 0, &stats, "size_desc");
+        let sorted = sorted_children(&tree, 0, &stats, SortOrder::SizeDesc);
         // small.txt (index 1) should be excluded.
         assert_eq!(sorted, vec![2, 3]);
     }

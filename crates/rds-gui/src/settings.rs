@@ -1,56 +1,41 @@
-//! Settings dialog for configuring exclude patterns, sort order, and color scheme.
+//! Settings dialog for configuring exclude patterns, sort order, color scheme,
+//! follow-symlinks, and max recent paths.
+
+use rds_core::{ColorScheme, SortOrder};
 
 /// Transient UI state for the settings dialog window.
 pub(crate) struct SettingsDialogState {
     pub show: bool,
     pub exclude_patterns: Vec<String>,
     pub new_pattern: String,
-    pub default_sort: String,
-    pub color_scheme: String,
+    pub default_sort: SortOrder,
+    pub color_scheme: ColorScheme,
+    pub follow_symlinks: bool,
+    pub max_recent_paths: usize,
 }
 
 impl Default for SettingsDialogState {
     fn default() -> Self {
+        let defaults = rds_core::AppConfig::default();
         Self {
             show: false,
             exclude_patterns: Vec::new(),
             new_pattern: String::new(),
-            default_sort: "size_desc".to_string(),
-            color_scheme: "default".to_string(),
+            default_sort: defaults.default_sort,
+            color_scheme: defaults.color_scheme,
+            follow_symlinks: defaults.follow_symlinks,
+            max_recent_paths: defaults.max_recent_paths,
         }
     }
-}
-
-const COLOR_SCHEMES: &[(&str, &str)] = &[("default", "Default")];
-
-fn color_label(value: &str) -> &str {
-    COLOR_SCHEMES
-        .iter()
-        .find(|(v, _)| *v == value)
-        .map(|(_, label)| *label)
-        .unwrap_or("Default")
-}
-
-const SORT_OPTIONS: &[(&str, &str)] = &[
-    ("size_desc", "Size (largest first)"),
-    ("size_asc", "Size (smallest first)"),
-    ("name_asc", "Name (A-Z)"),
-    ("name_desc", "Name (Z-A)"),
-];
-
-fn sort_label(value: &str) -> &str {
-    SORT_OPTIONS
-        .iter()
-        .find(|(v, _)| *v == value)
-        .map(|(_, label)| *label)
-        .unwrap_or("Size (largest first)")
 }
 
 pub(crate) fn show(
     state: &mut SettingsDialogState,
     live_exclude_patterns: &mut Vec<String>,
-    live_default_sort: &mut String,
-    live_color_scheme: &mut String,
+    live_default_sort: &mut SortOrder,
+    live_color_scheme: &mut ColorScheme,
+    live_follow_symlinks: &mut bool,
+    live_max_recent_paths: &mut usize,
     ctx: &egui::Context,
 ) -> bool {
     if !state.show {
@@ -91,10 +76,10 @@ pub(crate) fn show(
             ui.horizontal(|ui| {
                 ui.label("Default");
                 egui::ComboBox::from_id_salt("settings_sort_order")
-                    .selected_text(sort_label(&state.default_sort))
+                    .selected_text(state.default_sort.label())
                     .show_ui(ui, |ui| {
-                        for &(value, label) in SORT_OPTIONS {
-                            ui.selectable_value(&mut state.default_sort, value.to_string(), label);
+                        for &variant in SortOrder::ALL {
+                            ui.selectable_value(&mut state.default_sort, variant, variant.label());
                         }
                     });
             });
@@ -105,14 +90,25 @@ pub(crate) fn show(
             ui.horizontal(|ui| {
                 ui.label("Scheme");
                 egui::ComboBox::from_id_salt("settings_color_scheme")
-                    .selected_text(color_label(&state.color_scheme))
+                    .selected_text(state.color_scheme.label())
                     .show_ui(ui, |ui| {
-                        ui.selectable_value(
-                            &mut state.color_scheme,
-                            "default".to_string(),
-                            "Default",
-                        );
+                        for &variant in ColorScheme::ALL {
+                            ui.selectable_value(&mut state.color_scheme, variant, variant.label());
+                        }
                     });
+            });
+
+            ui.separator();
+
+            ui.heading("Scanner");
+            ui.checkbox(&mut state.follow_symlinks, "Follow symbolic links");
+
+            ui.separator();
+
+            ui.heading("Recent Paths");
+            ui.horizontal(|ui| {
+                ui.label("Max entries");
+                ui.add(egui::DragValue::new(&mut state.max_recent_paths).range(1..=100));
             });
 
             ui.separator();
@@ -120,8 +116,10 @@ pub(crate) fn show(
             ui.horizontal(|ui| {
                 if ui.button("Apply").clicked() {
                     *live_exclude_patterns = state.exclude_patterns.clone();
-                    *live_default_sort = state.default_sort.clone();
-                    *live_color_scheme = state.color_scheme.clone();
+                    *live_default_sort = state.default_sort;
+                    *live_color_scheme = state.color_scheme;
+                    *live_follow_symlinks = state.follow_symlinks;
+                    *live_max_recent_paths = state.max_recent_paths;
                     state.show = false;
                     applied = true;
                 }

@@ -396,6 +396,10 @@ impl Scanner {
                     return;
                 }
 
+                // Exclude filtering: the sole point where excluded entries are
+                // removed. Runs on rayon threads before entries are yielded by
+                // the iterator, so excluded directories never have their children
+                // read (`read_children_path = None`).
                 if !exclude_flag.is_empty() {
                     children.retain_mut(|entry_result| {
                         let entry = match entry_result {
@@ -434,13 +438,6 @@ impl Scanner {
                     EntryAction::Skip => continue,
                     EntryAction::Process(e, p) => (e, p),
                 };
-
-            if !exclude.is_empty() {
-                let name = entry.file_name().to_string_lossy();
-                if exclude.iter().any(|p| p.matches(&name)) {
-                    continue;
-                }
-            }
 
             let parent_path = match entry_path.parent() {
                 Some(p) => p.to_path_buf(),
