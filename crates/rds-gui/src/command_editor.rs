@@ -1,3 +1,8 @@
+//! Command editor window for managing user-defined custom commands.
+//!
+//! Provides an egui Window with inline editing of existing commands,
+//! add/remove controls, and a close button. (ref: DL-004, DL-007)
+
 use rds_core::CustomCommand;
 
 pub(crate) fn show(
@@ -41,7 +46,7 @@ pub(crate) fn show(
                 );
                 ui.add(
                     egui::TextEdit::singleline(&mut editor.new_template)
-                        .hint_text("Command template"),
+                        .hint_text("Template (use {path})"),
                 );
                 let can_add = !editor.new_name.is_empty() && !editor.new_template.is_empty();
                 if ui.add_enabled(can_add, egui::Button::new("Add")).clicked() {
