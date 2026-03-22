@@ -23,6 +23,7 @@ use rds_core::tree::DirTree;
 mod actions;
 mod command_editor;
 mod duplicates;
+mod error_log;
 mod export;
 mod ext_stats;
 mod notifications;
@@ -83,8 +84,8 @@ pub struct RustDirStatApp {
     path_input: String,
     /// Validation error shown in toolbar when user enters an invalid path.
     path_error: Option<String>,
-    /// Running count of ScanError events received during the current scan.
-    scan_errors: u64,
+    /// Accumulated scan errors with path and message detail, capped at 1000.
+    scan_error_log: error_log::ScanErrorLog,
     /// When the current scan began, for elapsed time and rate calculation.
     scan_start: Option<Instant>,
     /// When SubtreeStats/ExtensionStats were last recomputed during scan,
@@ -184,7 +185,7 @@ impl RustDirStatApp {
             initial_path,
             path_input: String::new(),
             path_error: None,
-            scan_errors: 0,
+            scan_error_log: error_log::ScanErrorLog::default(),
             scan_start: None,
             last_live_recompute: None,
             live_node_count: 0,
@@ -251,7 +252,7 @@ impl RustDirStatApp {
         self.tree = None;
         self.files_scanned = 0;
         self.bytes_scanned = 0;
-        self.scan_errors = 0;
+        self.scan_error_log.clear();
         self.scan_start = Some(Instant::now());
         self.last_live_recompute = None;
         self.live_node_count = 0;
@@ -360,8 +361,8 @@ impl RustDirStatApp {
                     self.finish_scan(stats);
                     return;
                 }
-                Ok(ScanEvent::ScanError { .. }) => {
-                    self.scan_errors += 1;
+                Ok(ScanEvent::ScanError { path, error }) => {
+                    self.scan_error_log.push(path, error);
                 }
                 Ok(ScanEvent::DuplicateFound { node_indices, .. }) => {
                     let size = node_indices
@@ -388,7 +389,7 @@ impl RustDirStatApp {
                         total_dirs: 0,
                         total_bytes: 0,
                         duration_ms: 0,
-                        errors: self.scan_errors,
+                        errors: self.scan_error_log.total_count(),
                     });
                     return;
                 }
@@ -784,8 +785,8 @@ impl eframe::App for RustDirStatApp {
                             format_bytes(bytes_per_sec as u64),
                         )
                     };
-                    if self.scan_errors > 0 {
-                        text.push_str(&format!(" ({} errors)", self.scan_errors));
+                    if self.scan_error_log.total_count() > 0 {
+                        text.push_str(&format!(" ({} errors)", self.scan_error_log.total_count()));
                     }
 
                     let fraction = (elapsed_secs * 0.3 % 1.0) as f32;
@@ -802,8 +803,8 @@ impl eframe::App for RustDirStatApp {
                         format_bytes(stats.total_bytes),
                         stats.duration_ms as f64 / 1000.0,
                     );
-                    if self.scan_errors > 0 {
-                        text.push_str(&format!(" ({} errors)", self.scan_errors));
+                    if self.scan_error_log.total_count() > 0 {
+                        text.push_str(&format!(" ({} errors)", self.scan_error_log.total_count()));
                     }
                     if self.freed_bytes > 0 {
                         text.push_str(&format!(" | {} freed", format_bytes(self.freed_bytes)));
@@ -830,6 +831,15 @@ impl eframe::App for RustDirStatApp {
                         &self.custom_commands,
                         ui,
                     );
+                });
+        }
+
+        // --- Error log panel ---
+        if !self.scan_error_log.is_empty() && scan_complete {
+            egui::TopBottomPanel::bottom("error_log_panel")
+                .resizable(true)
+                .show(ctx, |ui| {
+                    error_log::show(&self.scan_error_log, ui);
                 });
         }
 
@@ -973,7 +983,7 @@ mod tests {
         assert!(app.scan_handle.is_none());
         assert_eq!(app.files_scanned, 0);
         assert_eq!(app.bytes_scanned, 0);
-        assert_eq!(app.scan_errors, 0);
+        assert!(app.scan_error_log.is_empty());
         assert!(app.extension_stats.is_none());
         assert!(app.selected_node.is_none());
         assert!(app.subtree_stats.is_none());
