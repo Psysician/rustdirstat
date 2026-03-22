@@ -42,7 +42,7 @@ const LIGHT_Z: f32 = 0.816_496_6;
 
 /// Accumulated parabolic ridge coefficients for cushion shading.
 #[derive(Clone, Copy, Default, Debug)]
-pub(crate) struct CushionCoeffs {
+pub struct CushionCoeffs {
     pub a2x: f32,
     pub a1x: f32,
     pub a2y: f32,
@@ -154,7 +154,7 @@ fn build_cushion_mesh(
 }
 
 /// A single file rectangle in the treemap, ready for painting.
-pub(crate) struct TreemapRect {
+pub struct TreemapRect {
     /// Index into the `DirTree` arena. `usize::MAX` is a sentinel for
     /// aggregated "other" buckets that don't correspond to a single node.
     pub node_index: usize,
@@ -180,7 +180,7 @@ struct LayoutItem {
 }
 
 /// Computed treemap layout: a flat list of file rectangles.
-pub(crate) struct TreemapLayout {
+pub struct TreemapLayout {
     pub rects: Vec<TreemapRect>,
     pub last_size: egui::Vec2,
     /// Root node used for this layout computation. Used for cache invalidation

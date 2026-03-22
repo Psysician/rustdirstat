@@ -31,6 +31,11 @@ mod settings;
 mod tree_view;
 mod treemap;
 
+#[cfg(feature = "bench-internals")]
+pub use tree_view::SubtreeStats;
+#[cfg(feature = "bench-internals")]
+pub use treemap::{TreemapLayout, TreemapRect, MAX_DISPLAY_RECTS};
+
 /// Scan lifecycle phases. (ref: DL-004)
 enum ScanPhase {
     /// No scan running; waiting for user to pick a directory.
