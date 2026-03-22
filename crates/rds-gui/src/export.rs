@@ -407,7 +407,13 @@ mod tests {
         let tmp = tempfile::NamedTempFile::new().unwrap();
         let path = tmp.path().to_path_buf();
 
-        let result = export_tree(&tree, tree.root(), ExportScope::FullTree, ExportFormat::Csv, &path);
+        let result = export_tree(
+            &tree,
+            tree.root(),
+            ExportScope::FullTree,
+            ExportFormat::Csv,
+            &path,
+        );
         match result {
             ExportResult::Success { record_count, .. } => {
                 assert_eq!(record_count, 4);
@@ -416,10 +422,16 @@ mod tests {
         }
 
         let mut content = String::new();
-        std::fs::File::open(&path).unwrap().read_to_string(&mut content).unwrap();
+        std::fs::File::open(&path)
+            .unwrap()
+            .read_to_string(&mut content)
+            .unwrap();
         let lines: Vec<&str> = content.lines().collect();
 
-        assert_eq!(lines[0], "path,name,size_bytes,size_human,is_dir,extension,modified_timestamp");
+        assert_eq!(
+            lines[0],
+            "path,name,size_bytes,size_human,is_dir,extension,modified_timestamp"
+        );
 
         assert_eq!(lines.len(), 5);
 
@@ -442,7 +454,13 @@ mod tests {
         let tmp = tempfile::NamedTempFile::new().unwrap();
         let path = tmp.path().to_path_buf();
 
-        let result = export_tree(&tree, tree.root(), ExportScope::FullTree, ExportFormat::Json, &path);
+        let result = export_tree(
+            &tree,
+            tree.root(),
+            ExportScope::FullTree,
+            ExportFormat::Json,
+            &path,
+        );
         match result {
             ExportResult::Success { record_count, .. } => {
                 assert_eq!(record_count, 4);
@@ -451,14 +469,15 @@ mod tests {
         }
 
         let mut content = String::new();
-        std::fs::File::open(&path).unwrap().read_to_string(&mut content).unwrap();
+        std::fs::File::open(&path)
+            .unwrap()
+            .read_to_string(&mut content)
+            .unwrap();
         let parsed: Vec<serde_json::Value> = serde_json::from_str(&content).unwrap();
 
         assert_eq!(parsed.len(), 4);
 
-        let names: Vec<&str> = parsed.iter()
-            .map(|v| v["name"].as_str().unwrap())
-            .collect();
+        let names: Vec<&str> = parsed.iter().map(|v| v["name"].as_str().unwrap()).collect();
         assert!(names.contains(&"report.txt"));
         assert!(names.contains(&"image.png"));
         assert!(!names.contains(&"deleted.log"));
@@ -490,7 +509,13 @@ mod tests {
         let tmp = tempfile::NamedTempFile::new().unwrap();
         let path = tmp.path().to_path_buf();
 
-        let result = export_tree(&tree, idx_a, ExportScope::CurrentView, ExportFormat::Json, &path);
+        let result = export_tree(
+            &tree,
+            idx_a,
+            ExportScope::CurrentView,
+            ExportFormat::Json,
+            &path,
+        );
         match result {
             ExportResult::Success { record_count, .. } => {
                 assert_eq!(record_count, 3);
@@ -499,14 +524,15 @@ mod tests {
         }
 
         let mut content = String::new();
-        std::fs::File::open(&path).unwrap().read_to_string(&mut content).unwrap();
+        std::fs::File::open(&path)
+            .unwrap()
+            .read_to_string(&mut content)
+            .unwrap();
         let parsed: Vec<serde_json::Value> = serde_json::from_str(&content).unwrap();
 
         assert_eq!(parsed.len(), 3);
 
-        let names: Vec<&str> = parsed.iter()
-            .map(|v| v["name"].as_str().unwrap())
-            .collect();
+        let names: Vec<&str> = parsed.iter().map(|v| v["name"].as_str().unwrap()).collect();
         assert!(names.contains(&"subdir_a"));
         assert!(names.contains(&"a1.txt"));
         assert!(names.contains(&"a2.rs"));
@@ -561,10 +587,16 @@ mod tests {
         }
 
         let mut content = String::new();
-        std::fs::File::open(&path).unwrap().read_to_string(&mut content).unwrap();
+        std::fs::File::open(&path)
+            .unwrap()
+            .read_to_string(&mut content)
+            .unwrap();
         let lines: Vec<&str> = content.lines().collect();
 
-        assert_eq!(lines[0], "group_number,path,name,size_bytes,size_human,extension,wasted_bytes_in_group");
+        assert_eq!(
+            lines[0],
+            "group_number,path,name,size_bytes,size_human,extension,wasted_bytes_in_group"
+        );
         assert_eq!(lines.len(), 5);
 
         let group1_lines: Vec<&&str> = lines.iter().filter(|l| l.starts_with("1,")).collect();
@@ -608,14 +640,16 @@ mod tests {
         }
 
         let mut content = String::new();
-        std::fs::File::open(&path).unwrap().read_to_string(&mut content).unwrap();
+        std::fs::File::open(&path)
+            .unwrap()
+            .read_to_string(&mut content)
+            .unwrap();
         let parsed: Vec<serde_json::Value> = serde_json::from_str(&content).unwrap();
 
         assert_eq!(parsed.len(), 4);
 
-        let group1: Vec<&serde_json::Value> = parsed.iter()
-            .filter(|v| v["group_number"] == 1)
-            .collect();
+        let group1: Vec<&serde_json::Value> =
+            parsed.iter().filter(|v| v["group_number"] == 1).collect();
         assert_eq!(group1.len(), 2);
         for record in &group1 {
             assert_eq!(record["size_bytes"], 5000);
@@ -623,9 +657,8 @@ mod tests {
             assert_eq!(record["extension"], "jpg");
         }
 
-        let group2: Vec<&serde_json::Value> = parsed.iter()
-            .filter(|v| v["group_number"] == 2)
-            .collect();
+        let group2: Vec<&serde_json::Value> =
+            parsed.iter().filter(|v| v["group_number"] == 2).collect();
         assert_eq!(group2.len(), 2);
         for record in &group2 {
             assert_eq!(record["size_bytes"], 3000);
@@ -633,9 +666,7 @@ mod tests {
             assert_eq!(record["extension"], "csv");
         }
 
-        let names: Vec<&str> = parsed.iter()
-            .map(|v| v["name"].as_str().unwrap())
-            .collect();
+        let names: Vec<&str> = parsed.iter().map(|v| v["name"].as_str().unwrap()).collect();
         assert!(names.contains(&"photo.jpg"));
         assert!(names.contains(&"photo_copy.jpg"));
         assert!(names.contains(&"data.csv"));
@@ -659,10 +690,16 @@ mod tests {
         }
 
         let mut content = String::new();
-        std::fs::File::open(&path).unwrap().read_to_string(&mut content).unwrap();
+        std::fs::File::open(&path)
+            .unwrap()
+            .read_to_string(&mut content)
+            .unwrap();
         let lines: Vec<&str> = content.lines().collect();
         assert_eq!(lines.len(), 1);
-        assert_eq!(lines[0], "group_number,path,name,size_bytes,size_human,extension,wasted_bytes_in_group");
+        assert_eq!(
+            lines[0],
+            "group_number,path,name,size_bytes,size_human,extension,wasted_bytes_in_group"
+        );
 
         let tmp_json = tempfile::NamedTempFile::new().unwrap();
         let path_json = tmp_json.path().to_path_buf();
@@ -676,7 +713,10 @@ mod tests {
         }
 
         let mut json_content = String::new();
-        std::fs::File::open(&path_json).unwrap().read_to_string(&mut json_content).unwrap();
+        std::fs::File::open(&path_json)
+            .unwrap()
+            .read_to_string(&mut json_content)
+            .unwrap();
         let parsed: Vec<serde_json::Value> = serde_json::from_str(&json_content).unwrap();
         assert!(parsed.is_empty());
     }
