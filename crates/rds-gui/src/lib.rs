@@ -15,6 +15,7 @@ use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 
 use crossbeam_channel::Receiver;
+use rds_core::CustomCommand;
 use rds_core::scan::{ScanConfig, ScanEvent, ScanStats};
 use rds_core::stats::ExtensionStats;
 use rds_core::tree::DirTree;
@@ -39,6 +40,23 @@ enum ScanPhase {
 pub(crate) struct DuplicateGroup {
     pub(crate) node_indices: Vec<usize>,
     pub(crate) wasted_bytes: u64,
+}
+
+/// Transient UI state for the custom command editor window.
+pub(crate) struct CommandEditorState {
+    pub(crate) show: bool,
+    pub(crate) new_name: String,
+    pub(crate) new_template: String,
+}
+
+impl Default for CommandEditorState {
+    fn default() -> Self {
+        Self {
+            show: false,
+            new_name: String::new(),
+            new_template: String::new(),
+        }
+    }
 }
 
 /// Pending delete confirmation state. Populated when the user initiates a
@@ -111,6 +129,10 @@ pub struct RustDirStatApp {
     freed_bytes: u64,
     /// Error message from the most recent failed delete attempt.
     delete_error: Option<String>,
+    /// User-defined custom commands available in context menus.
+    custom_commands: Vec<CustomCommand>,
+    /// Transient UI state for the custom command editor window.
+    command_editor: CommandEditorState,
 }
 
 impl Default for RustDirStatApp {
@@ -158,6 +180,8 @@ impl RustDirStatApp {
             pending_delete: None,
             freed_bytes: 0,
             delete_error: None,
+            custom_commands: Vec::new(),
+            command_editor: CommandEditorState::default(),
         }
     }
 
@@ -802,6 +826,8 @@ mod tests {
         assert!(app.scan_start.is_none());
         assert!(app.last_live_recompute.is_none());
         assert_eq!(app.live_node_count, 0);
+        assert!(app.custom_commands.is_empty());
+        assert!(!app.command_editor.show);
     }
 
     #[test]
