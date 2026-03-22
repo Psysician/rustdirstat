@@ -591,10 +591,7 @@ mod tests {
         // FileNode contains String (24), u64 (8), bool (1), Vec<usize> (24),
         // Option<usize> (16), Option<String> (24), Option<u64> (16), bool (1)
         // With alignment, expect roughly 112-200 bytes on 64-bit.
-        assert!(
-            size <= 200,
-            "FileNode is {size} bytes, expected <= 200"
-        );
+        assert!(size <= 200, "FileNode is {size} bytes, expected <= 200");
         assert!(
             size >= 80,
             "FileNode is {size} bytes, expected >= 80 (suspiciously small)"
@@ -607,10 +604,7 @@ mod tests {
         println!("size_of::<DirTree>() = {size} bytes");
         // DirTree is a wrapper around Vec<FileNode>, so it should be 24 bytes
         // (pointer + length + capacity) on 64-bit.
-        assert!(
-            size <= 64,
-            "DirTree is {size} bytes, expected <= 64"
-        );
+        assert!(size <= 64, "DirTree is {size} bytes, expected <= 64");
     }
 
     #[test]

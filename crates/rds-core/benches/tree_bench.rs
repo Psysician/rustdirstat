@@ -39,11 +39,7 @@ fn bench_insert_nodes(c: &mut Criterion) {
             b.iter(|| {
                 let mut tree = DirTree::new("/root");
                 for i in 0..n {
-                    let node = make_file_node(
-                        &format!("file_{i}.txt"),
-                        1024,
-                        Some("txt"),
-                    );
+                    let node = make_file_node(&format!("file_{i}.txt"), 1024, Some("txt"));
                     tree.insert(0, node);
                 }
                 tree
