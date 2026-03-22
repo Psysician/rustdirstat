@@ -27,6 +27,7 @@ tracing-subscriber = "0.3.23"
 rds-core = { path = "crates/rds-core" }
 rds-scanner = { path = "crates/rds-scanner" }
 rds-gui = { path = "crates/rds-gui" }
+glob = "0.3"
 walkdir = "2.5.0"
 tempfile = "3.27.0"
 

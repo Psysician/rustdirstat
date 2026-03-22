@@ -254,6 +254,9 @@ fn compute_recursive(
         return;
     }
 
+    // Squarify requires size-descending order for optimal aspect ratios.
+    // This intentionally ignores the user's default_sort preference,
+    // which only applies to the directory tree panel.
     items.sort_by(|a, b| {
         b.size
             .partial_cmp(&a.size)

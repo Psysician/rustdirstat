@@ -9,12 +9,14 @@ pub(crate) fn show(
     commands: &mut Vec<CustomCommand>,
     editor: &mut super::CommandEditorState,
     ctx: &egui::Context,
-) {
+) -> bool {
     if !editor.show {
-        return;
+        return false;
     }
 
     let mut to_remove: Vec<usize> = Vec::new();
+    let mut added = false;
+    let mut edited = false;
 
     egui::Window::new("Custom Commands")
         .collapsible(false)
@@ -23,11 +25,15 @@ pub(crate) fn show(
         .show(ctx, |ui| {
             for (i, cmd) in commands.iter_mut().enumerate() {
                 ui.horizontal(|ui| {
-                    ui.add(egui::TextEdit::singleline(&mut cmd.name).hint_text("Name"));
-                    ui.add(
+                    let name_resp =
+                        ui.add(egui::TextEdit::singleline(&mut cmd.name).hint_text("Name"));
+                    let tmpl_resp = ui.add(
                         egui::TextEdit::singleline(&mut cmd.template)
                             .hint_text("Template (e.g. ls -la {path})"),
                     );
+                    if name_resp.changed() || tmpl_resp.changed() {
+                        edited = true;
+                    }
                     if ui.button("Remove").clicked() {
                         to_remove.push(i);
                     }
@@ -48,6 +54,7 @@ pub(crate) fn show(
                         name: std::mem::take(&mut editor.new_name),
                         template: std::mem::take(&mut editor.new_template),
                     });
+                    added = true;
                 }
             });
 
@@ -58,7 +65,10 @@ pub(crate) fn show(
             }
         });
 
+    let removed = !to_remove.is_empty();
     for i in to_remove.into_iter().rev() {
         commands.remove(i);
     }
+
+    added || removed || edited
 }

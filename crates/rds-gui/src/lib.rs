@@ -25,6 +25,7 @@ mod command_editor;
 mod duplicates;
 mod export;
 mod ext_stats;
+mod settings;
 mod tree_view;
 mod treemap;
 
@@ -128,13 +129,34 @@ pub struct RustDirStatApp {
     command_editor: CommandEditorState,
     /// Export dialog state (format, scope, visibility, last result).
     export_dialog: export::ExportDialogState,
+    /// Settings dialog state (working copies of config fields).
+    settings_dialog: settings::SettingsDialogState,
+    /// Glob patterns to exclude from scans.
+    exclude_patterns: Vec<String>,
+    /// Recently scanned paths for quick re-access.
+    recent_paths: Vec<PathBuf>,
+    /// Default sort order for tree/stats panels.
+    default_sort: rds_core::SortOrder,
+    /// Active color scheme name.
+    color_scheme: rds_core::ColorScheme,
+    /// Maximum number of recent paths to retain.
+    max_recent_paths: usize,
+    /// Whether the scanner should follow symbolic links.
+    follow_symlinks: bool,
+    /// Optional callback invoked to persist config changes to disk.
+    #[allow(clippy::type_complexity)]
+    config_save_fn: Option<Box<dyn Fn(&rds_core::AppConfig) + Send>>,
 }
 
 impl Default for RustDirStatApp {
-    /// Delegates to `new(None)` for backward compatibility with
-    /// callers that construct via Default. (ref: DL-007)
+    /// Delegates to `new(None, AppConfig::default())` for backward compatibility
+    /// with callers that construct via Default. (ref: DL-007)
+    ///
+    /// Note: `config_save_fn` is `None`, so config changes are not persisted.
+    /// Call [`set_config_save_fn`](Self::set_config_save_fn) after construction
+    /// if persistence is required.
     fn default() -> Self {
-        Self::new(None)
+        Self::new(None, rds_core::AppConfig::default())
     }
 }
 
@@ -144,8 +166,9 @@ impl RustDirStatApp {
     const LIVE_RECOMPUTE_INTERVAL: Duration = Duration::from_millis(500);
 
     /// Creates a new app. If `initial_path` is `Some`, scanning starts
-    /// automatically on the first frame.
-    pub fn new(initial_path: Option<PathBuf>) -> Self {
+    /// automatically on the first frame. Config fields are populated from
+    /// the provided `AppConfig`.
+    pub fn new(initial_path: Option<PathBuf>, config: rds_core::AppConfig) -> Self {
         Self {
             phase: ScanPhase::Idle,
             tree: None,
@@ -175,10 +198,23 @@ impl RustDirStatApp {
             pending_delete: None,
             freed_bytes: 0,
             delete_error: None,
-            custom_commands: Vec::new(),
+            custom_commands: config.custom_commands,
             command_editor: CommandEditorState::default(),
             export_dialog: export::ExportDialogState::default(),
+            settings_dialog: settings::SettingsDialogState::default(),
+            exclude_patterns: config.exclude_patterns,
+            recent_paths: config.recent_paths,
+            default_sort: config.default_sort,
+            color_scheme: config.color_scheme,
+            max_recent_paths: config.max_recent_paths,
+            follow_symlinks: config.follow_symlinks,
+            config_save_fn: None,
         }
+    }
+
+    /// Sets the callback used to persist config changes to disk.
+    pub fn set_config_save_fn(&mut self, f: impl Fn(&rds_core::AppConfig) + Send + 'static) {
+        self.config_save_fn = Some(Box::new(f));
     }
 
     /// Cancels any running scan, resets state, and spawns a new Scanner
@@ -231,6 +267,7 @@ impl RustDirStatApp {
         self.export_dialog.last_result = None;
         self.phase = ScanPhase::Scanning;
         self.scan_path = Some(path.clone());
+        self.track_recent_path(path.clone());
 
         // Launch scanner.
         let (tx, rx) = crossbeam_channel::bounded(4096);
@@ -238,6 +275,8 @@ impl RustDirStatApp {
         let config = ScanConfig {
             root: path,
             hash_duplicates: self.hash_duplicates_enabled,
+            exclude_patterns: self.exclude_patterns.clone(),
+            follow_symlinks: self.follow_symlinks,
             ..ScanConfig::default()
         };
 
@@ -461,6 +500,38 @@ impl RustDirStatApp {
             }
         }
     }
+
+    /// Persists the current config to disk via the save callback.
+    fn save_config(&self) {
+        let config = self.collect_config();
+        if let Some(ref save_fn) = self.config_save_fn {
+            save_fn(&config);
+        }
+    }
+
+    /// Tracks a path in the recent paths list. Canonicalizes the path (falling
+    /// back to the original if canonicalization fails), removes any existing
+    /// occurrence, inserts at position 0, and truncates to `max_recent_paths`.
+    /// Persists the updated config via the save callback.
+    fn track_recent_path(&mut self, path: PathBuf) {
+        let canonical = std::fs::canonicalize(&path).unwrap_or(path);
+        self.recent_paths.retain(|p| p != &canonical);
+        self.recent_paths.insert(0, canonical);
+        self.recent_paths.truncate(self.max_recent_paths);
+        self.save_config();
+    }
+
+    fn collect_config(&self) -> rds_core::AppConfig {
+        rds_core::AppConfig {
+            custom_commands: self.custom_commands.clone(),
+            exclude_patterns: self.exclude_patterns.clone(),
+            color_scheme: self.color_scheme,
+            default_sort: self.default_sort,
+            recent_paths: self.recent_paths.clone(),
+            max_recent_paths: self.max_recent_paths,
+            follow_symlinks: self.follow_symlinks,
+        }
+    }
 }
 
 /// Formats a byte count as a human-readable string (B/KB/MB/GB/TB).
@@ -538,7 +609,11 @@ impl eframe::App for RustDirStatApp {
         }
 
         // --- Command editor window ---
-        command_editor::show(&mut self.custom_commands, &mut self.command_editor, ctx);
+        let commands_changed =
+            command_editor::show(&mut self.custom_commands, &mut self.command_editor, ctx);
+        if commands_changed {
+            self.save_config();
+        }
 
         // --- Export dialog ---
         export::show_dialog(
@@ -548,6 +623,21 @@ impl eframe::App for RustDirStatApp {
             &self.duplicate_groups,
             ctx,
         );
+
+        // --- Settings dialog ---
+        let settings_applied = settings::show(
+            &mut self.settings_dialog,
+            &mut self.exclude_patterns,
+            &mut self.default_sort,
+            &mut self.color_scheme,
+            &mut self.follow_symlinks,
+            &mut self.max_recent_paths,
+            ctx,
+        );
+        if settings_applied {
+            self.recent_paths.truncate(self.max_recent_paths);
+            self.save_config();
+        }
 
         // --- Toolbar ---
         egui::TopBottomPanel::top("toolbar").show(ctx, |ui| {
@@ -560,14 +650,39 @@ impl eframe::App for RustDirStatApp {
                     self.start_scan(path);
                 }
 
+                if !self.recent_paths.is_empty() {
+                    let mut selected_recent: Option<PathBuf> = None;
+                    ui.menu_button("Recent", |ui| {
+                        for recent in &self.recent_paths {
+                            let label = recent.display().to_string();
+                            if ui.selectable_label(false, &label).clicked() {
+                                selected_recent = Some(recent.clone());
+                                ui.close();
+                            }
+                        }
+                    });
+                    if let Some(path) = selected_recent {
+                        self.path_input = path.display().to_string();
+                        self.start_scan(path);
+                    }
+                }
+
                 ui.separator();
 
                 // Text input fallback — always works, including WSL2.
-                // Reserve space for: Scan button (~50px) + separator (~10px) +
-                // Detect Duplicates checkbox (~150px) + separator (~10px) +
-                // Commands button (~90px) + separator (~10px) +
-                // Export button (~70px).
-                const TOOLBAR_FIXED_CONTROLS_WIDTH: f32 = 390.0;
+                // Reserve space for right-side controls. Per-button estimates:
+                const BTN_SCAN: f32 = 50.0;
+                const BTN_DETECT_DUPES: f32 = 150.0;
+                const BTN_COMMANDS: f32 = 90.0;
+                const BTN_SETTINGS: f32 = 80.0;
+                const BTN_EXPORT: f32 = 70.0;
+                const SEPARATORS: f32 = 40.0; // ~10px each x4
+                const TOOLBAR_FIXED_CONTROLS_WIDTH: f32 = BTN_SCAN
+                    + BTN_DETECT_DUPES
+                    + BTN_COMMANDS
+                    + BTN_SETTINGS
+                    + BTN_EXPORT
+                    + SEPARATORS;
                 let text_width = (ui.available_width() - TOOLBAR_FIXED_CONTROLS_WIDTH).max(100.0);
                 let response = ui.add(
                     egui::TextEdit::singleline(&mut self.path_input)
@@ -601,6 +716,18 @@ impl eframe::App for RustDirStatApp {
                 ui.separator();
                 if ui.button("Commands...").clicked() {
                     self.command_editor.show = !self.command_editor.show;
+                }
+
+                if ui.button("Settings...").clicked() {
+                    if !self.settings_dialog.show {
+                        self.settings_dialog.exclude_patterns = self.exclude_patterns.clone();
+                        self.settings_dialog.default_sort = self.default_sort;
+                        self.settings_dialog.color_scheme = self.color_scheme;
+                        self.settings_dialog.follow_symlinks = self.follow_symlinks;
+                        self.settings_dialog.max_recent_paths = self.max_recent_paths;
+                        self.settings_dialog.new_pattern = String::new();
+                    }
+                    self.settings_dialog.show = !self.settings_dialog.show;
                 }
 
                 ui.separator();
@@ -718,6 +845,7 @@ impl eframe::App for RustDirStatApp {
                             scan_complete,
                             &mut self.pending_delete,
                             &self.custom_commands,
+                            self.default_sort,
                             ui,
                         );
                     }
@@ -818,6 +946,10 @@ impl eframe::App for RustDirStatApp {
                 }
             }
         });
+    }
+
+    fn on_exit(&mut self, _gl: std::option::Option<&eframe::glow::Context>) {
+        self.save_config();
     }
 }
 

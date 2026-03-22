@@ -6,6 +6,7 @@ use std::thread::{self, JoinHandle};
 use std::time::{Instant, UNIX_EPOCH};
 
 use crossbeam_channel::Sender;
+use glob::Pattern;
 use jwalk::WalkDir;
 use rds_core::scan::{ScanConfig, ScanEvent, ScanStats};
 use rds_core::tree::FileNode;
@@ -278,11 +279,25 @@ impl Scanner {
                 None
             };
 
+            let exclude: Vec<Pattern> = config
+                .exclude_patterns
+                .iter()
+                .filter_map(|p| match Pattern::new(p) {
+                    Ok(pat) => Some(pat),
+                    Err(e) => {
+                        warn!(pattern = %p, error = %e, "invalid exclude glob pattern");
+                        None
+                    }
+                })
+                .collect();
+            let exclude = Arc::new(exclude);
+
             Self::walk_entries(
                 &config,
                 &tx,
                 &cancel,
                 &max_nodes_reached,
+                &exclude,
                 &mut path_to_index,
                 &mut acc,
                 &mut file_entries,
@@ -350,11 +365,13 @@ impl Scanner {
     /// ceiling is hit. The `process_read_dir` callback reads this flag to stop
     /// spawning new work. A bool flag avoids atomic counter contention on the
     /// hot path; the main thread still enforces the exact limit (ref: DL-003).
+    #[allow(clippy::too_many_arguments)]
     fn walk_entries(
         config: &ScanConfig,
         tx: &Sender<ScanEvent>,
         cancel: &Arc<AtomicBool>,
         max_nodes_reached: &Arc<AtomicBool>,
+        exclude: &Arc<Vec<Pattern>>,
         path_to_index: &mut HashMap<PathBuf, usize>,
         acc: &mut WalkAccum,
         file_entries: &mut Option<Vec<FileEntry>>,
@@ -362,6 +379,7 @@ impl Scanner {
         // Clone Arc handles for move into process_read_dir closure (ref: DL-002).
         let cancel_flag = Arc::clone(cancel);
         let mnr_flag = Arc::clone(max_nodes_reached);
+        let exclude_flag = Arc::clone(exclude);
 
         let walker = WalkDir::new(&config.root)
             .skip_hidden(false)
@@ -375,6 +393,26 @@ impl Scanner {
                         e.read_children_path = None;
                     }
                     children.clear();
+                    return;
+                }
+
+                // Exclude filtering: the sole point where excluded entries are
+                // removed. Runs on rayon threads before entries are yielded by
+                // the iterator, so excluded directories never have their children
+                // read (`read_children_path = None`).
+                if !exclude_flag.is_empty() {
+                    children.retain_mut(|entry_result| {
+                        let entry = match entry_result {
+                            Ok(e) => e,
+                            Err(_) => return true,
+                        };
+                        let name = entry.file_name.to_string_lossy();
+                        if exclude_flag.iter().any(|p| p.matches(&name)) {
+                            entry.read_children_path = None;
+                            return false;
+                        }
+                        true
+                    });
                 }
             });
 

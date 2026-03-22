@@ -5,7 +5,7 @@ rustdirstat/
   Cargo.toml                  # Workspace root; all dep versions in [workspace.dependencies]
   Cargo.lock                  # Committed (binary crate — reproducible builds)
   src/
-    main.rs                   # CLI parsing (clap), tracing init, eframe window launch
+    main.rs                   # CLI parsing (clap), tracing init, config load/save (TOML via directories), eframe window launch
   crates/
     rds-core/                 # Shared data types — ZERO deps beyond serde
       Cargo.toml
@@ -17,22 +17,23 @@ rustdirstat/
         scan.rs               # ScanEvent enum, ScanConfig, ScanStats
         config.rs             # AppConfig + CustomCommand (TOML-deserializable)
         stats.rs              # ExtensionStats, HslColor, color_for_extension(), compute_extension_stats() (filters deleted nodes)
-    rds-scanner/              # Parallel jwalk scanner + SHA-256 duplicate detection
-      Cargo.toml              # Deps: jwalk, crossbeam-channel, sha2, rayon, tracing, rds-core
+    rds-scanner/              # Parallel jwalk scanner + SHA-256 duplicate detection + glob-based exclude filtering
+      Cargo.toml              # Deps: jwalk, crossbeam-channel, sha2, rayon, glob, tracing, rds-core
       CLAUDE.md
       README.md               # Ordering invariant, abort design, skip_hidden parity
       src/
         lib.rs                # Module declarations and re-exports
-        scanner.rs            # Scanner::scan() — jwalk traversal, cancel flag, max_nodes, event streaming
+        scanner.rs            # Scanner::scan() — jwalk traversal, cancel flag, max_nodes, exclude pattern filtering via glob::Pattern, event streaming
         duplicate.rs          # DuplicateDetector — 3-phase pipeline (size grouping, partial hash, full SHA-256)
       tests/
         scan_integration.rs   # Integration tests with temp directory fixtures
+        exclude_integration.rs # Exclude pattern filtering integration tests
         duplicate_integration.rs # Duplicate detection integration tests
-    rds-gui/                  # egui/eframe GUI: dir picker, tree view, ext stats, treemap, duplicates, actions, export
+    rds-gui/                  # egui/eframe GUI: dir picker, tree view, ext stats, treemap, duplicates, actions, export, settings, config persistence
       Cargo.toml              # Deps: eframe, egui, streemap, crossbeam-channel, rds-core, rds-scanner, rfd, trash, open, serde, serde_json, csv
       CLAUDE.md
       src/
-        lib.rs                # RustDirStatApp: ScanPhase state machine, dir picker, scanner integration, 3-panel layout, PendingDelete, confirm_delete, CommandEditorState, ExportDialogState
+        lib.rs                # RustDirStatApp: ScanPhase state machine, dir picker, scanner integration, 3-panel layout, config persistence (collect_config/save_config/on_exit), recent paths tracking, PendingDelete, confirm_delete, CommandEditorState, ExportDialogState, SettingsDialogState
         tree_view.rs           # SubtreeStats cache (filters deleted), TreeViewState, sorted tree rendering with context menu
         ext_stats.rs           # hsl_to_color32, extension stats panel with stacked bar + Grid table
         treemap.rs             # CushionCoeffs, TreemapLayout, recursive squarify, cushion mesh render, right-click context menu
@@ -40,6 +41,7 @@ rustdirstat/
         actions.rs             # execute_delete (trash + tombstone), cleanup_duplicate_groups, open_in_file_manager, execute_custom_command
         command_editor.rs      # Command editor window: inline editing of custom commands, add/remove controls
         export.rs              # CSV/JSON export: ExportFormat/ExportScope enums, export_tree (DFS + serialize), export_duplicates, export dialog UI
+        settings.rs            # Settings dialog: SettingsDialogState, exclude patterns editor, sort order/color scheme ComboBox, Apply/Cancel
   .github/
     workflows/
       ci.yml                  # Build + test + clippy + fmt on ubuntu/macos/windows
@@ -88,6 +90,13 @@ rustdirstat/
 - `NodeDiscovered` carries full `FileNode` + `parent_index` (GUI-side arena index)
 - Scanner thread runs duplicate detection before sending `ScanComplete`
 
+### Configuration Persistence (src/main.rs + rds-core/src/config.rs)
+- `AppConfig` defined in rds-core (serde-deserializable, `#[serde(default)]` for forward compatibility)
+- File I/O owned by `main.rs` via `directories` (platform config dir) + `toml` crate
+- Save callback (`Box<dyn Fn(&AppConfig) + Send>`) passed to `RustDirStatApp` to avoid coupling rds-gui to filesystem crates
+- Auto-saves on settings dialog Apply, command editor changes, recent path tracking, and app exit (`on_exit`)
+- Missing or corrupt config gracefully defaults (log warning, use `AppConfig::default()`)
+
 ### Dependency Management (Cargo.toml)
 - All versions pinned once in `[workspace.dependencies]`
 - Crates opt in with `{ workspace = true }`
@@ -114,4 +123,5 @@ rustdirstat/
 | 14 | Open in File Manager | Done |
 | 15 | Custom Commands | Done |
 | 16 | CSV/JSON Export | Done |
-| 17-21 | See docs/milestones.md | Pending |
+| 17 | Configuration & Persistence | In Dev |
+| 18-21 | See docs/milestones.md | Pending |

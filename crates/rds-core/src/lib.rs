@@ -19,7 +19,7 @@ pub mod scan;
 pub mod stats;
 pub mod tree;
 
-pub use config::{AppConfig, CustomCommand};
+pub use config::{AppConfig, ColorScheme, CustomCommand, SortOrder};
 pub use scan::{ScanConfig, ScanEvent, ScanStats};
 pub use stats::{ExtensionStats, HslColor, color_for_extension, compute_extension_stats};
 pub use tree::{DirTree, FileNode};
