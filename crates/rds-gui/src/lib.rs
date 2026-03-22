@@ -23,7 +23,6 @@ use rds_core::tree::DirTree;
 mod actions;
 mod command_editor;
 mod duplicates;
-#[allow(dead_code)]
 mod export;
 mod ext_stats;
 mod tree_view;
@@ -540,6 +539,15 @@ impl eframe::App for RustDirStatApp {
 
         // --- Command editor window ---
         command_editor::show(&mut self.custom_commands, &mut self.command_editor, ctx);
+
+        // --- Export dialog ---
+        export::show_dialog(
+            &mut self.export_dialog,
+            self.tree.as_ref(),
+            self.treemap_root,
+            &self.duplicate_groups,
+            ctx,
+        );
 
         // --- Toolbar ---
         egui::TopBottomPanel::top("toolbar").show(ctx, |ui| {

@@ -1,3 +1,8 @@
+//! CSV and JSON export of scan results.
+//!
+//! Defines format/scope enums, flat record structs for tree and duplicate
+//! exports, dialog state, and the export dialog UI window.
+
 #[derive(Clone, Copy, PartialEq, Default)]
 pub(crate) enum ExportFormat {
     #[default]
@@ -217,6 +222,126 @@ pub(crate) fn export_duplicates(
         path: path_string,
         record_count,
     }
+}
+
+pub(crate) fn show_dialog(
+    state: &mut ExportDialogState,
+    tree: Option<&rds_core::tree::DirTree>,
+    treemap_root: usize,
+    duplicate_groups: &[crate::DuplicateGroup],
+    ctx: &egui::Context,
+) {
+    if !state.show {
+        return;
+    }
+
+    if duplicate_groups.is_empty() && state.scope == ExportScope::DuplicatesOnly {
+        state.scope = ExportScope::FullTree;
+    }
+
+    egui::Window::new("Export Scan Results")
+        .collapsible(false)
+        .resizable(false)
+        .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
+        .show(ctx, |ui| {
+            ui.horizontal(|ui| {
+                ui.label("Format");
+                egui::ComboBox::from_id_salt("export_format")
+                    .selected_text(state.format.label())
+                    .show_ui(ui, |ui| {
+                        ui.selectable_value(
+                            &mut state.format,
+                            ExportFormat::Csv,
+                            ExportFormat::Csv.label(),
+                        );
+                        ui.selectable_value(
+                            &mut state.format,
+                            ExportFormat::Json,
+                            ExportFormat::Json.label(),
+                        );
+                    });
+            });
+
+            ui.horizontal(|ui| {
+                ui.label("Scope");
+                egui::ComboBox::from_id_salt("export_scope")
+                    .selected_text(state.scope.label())
+                    .show_ui(ui, |ui| {
+                        ui.selectable_value(
+                            &mut state.scope,
+                            ExportScope::FullTree,
+                            ExportScope::FullTree.label(),
+                        );
+                        ui.selectable_value(
+                            &mut state.scope,
+                            ExportScope::CurrentView,
+                            ExportScope::CurrentView.label(),
+                        );
+                        if duplicate_groups.is_empty() {
+                            ui.add_enabled(
+                                false,
+                                egui::Button::new(format!(
+                                    "{} (no duplicates detected)",
+                                    ExportScope::DuplicatesOnly.label()
+                                )),
+                            );
+                        } else {
+                            ui.selectable_value(
+                                &mut state.scope,
+                                ExportScope::DuplicatesOnly,
+                                ExportScope::DuplicatesOnly.label(),
+                            );
+                        }
+                    });
+            });
+
+            ui.separator();
+
+            if ui.button("Export...").clicked() {
+                let (filter_name, filter_ext) = match state.format {
+                    ExportFormat::Csv => ("CSV files", "csv"),
+                    ExportFormat::Json => ("JSON files", "json"),
+                };
+                if let Some(path) = rfd::FileDialog::new()
+                    .set_file_name(default_filename(state.format))
+                    .add_filter(filter_name, &[filter_ext])
+                    .save_file()
+                {
+                    state.last_result = Some(match tree {
+                        Some(t) => match state.scope {
+                            ExportScope::DuplicatesOnly => {
+                                export_duplicates(t, duplicate_groups, state.format, &path)
+                            }
+                            ExportScope::CurrentView => {
+                                export_tree(t, treemap_root, state.scope, state.format, &path)
+                            }
+                            ExportScope::FullTree => {
+                                export_tree(t, t.root(), state.scope, state.format, &path)
+                            }
+                        },
+                        None => ExportResult::Error("No scan data available.".to_string()),
+                    });
+                }
+            }
+
+            if let Some(ref result) = state.last_result {
+                match result {
+                    ExportResult::Success { record_count, path } => {
+                        ui.colored_label(
+                            egui::Color32::from_rgb(80, 200, 80),
+                            format!("Exported {record_count} records to {path}"),
+                        );
+                    }
+                    ExportResult::Error(msg) => {
+                        ui.colored_label(egui::Color32::from_rgb(255, 80, 80), msg);
+                    }
+                }
+            }
+
+            if ui.button("Close").clicked() {
+                state.show = false;
+            }
+        });
 }
 
 pub(crate) fn default_filename(format: ExportFormat) -> String {
