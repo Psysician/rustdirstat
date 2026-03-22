@@ -4,6 +4,7 @@
 //! headers and selectable file paths for cross-panel synchronization.
 
 use crate::{DuplicateGroup, PendingDelete, format_bytes};
+use rds_core::CustomCommand;
 use rds_core::tree::DirTree;
 
 pub(crate) fn show(
@@ -12,6 +13,7 @@ pub(crate) fn show(
     selected_node: &mut Option<usize>,
     scan_complete: bool,
     pending_delete: &mut Option<PendingDelete>,
+    custom_commands: &[CustomCommand],
     ui: &mut egui::Ui,
 ) {
     let total_wasted: u64 = groups.iter().map(|g| g.wasted_bytes).sum();
@@ -56,6 +58,15 @@ pub(crate) fn show(
                                 if ui.button("Open in File Manager").clicked() {
                                     let _ = crate::actions::open_in_file_manager(tree, idx);
                                     ui.close();
+                                }
+                                if !custom_commands.is_empty() {
+                                    ui.separator();
+                                    for command in custom_commands {
+                                        if ui.button(&command.name).clicked() {
+                                            let _ = crate::actions::execute_custom_command(tree, idx, command);
+                                            ui.close();
+                                        }
+                                    }
                                 }
                                 ui.separator();
                                 if ui.button("Delete").clicked() {
