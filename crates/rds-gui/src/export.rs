@@ -85,7 +85,6 @@ impl Default for ExportDialogState {
 pub(crate) fn export_tree(
     tree: &rds_core::tree::DirTree,
     root_index: usize,
-    _scope: ExportScope,
     format: ExportFormat,
     output_path: &std::path::Path,
 ) -> ExportResult {
@@ -126,6 +125,19 @@ pub(crate) fn export_tree(
     match format {
         ExportFormat::Csv => {
             let mut writer = csv::Writer::from_writer(file);
+            if records.is_empty()
+                && let Err(e) = writer.write_record([
+                    "path",
+                    "name",
+                    "size_bytes",
+                    "size_human",
+                    "is_dir",
+                    "extension",
+                    "modified_timestamp",
+                ])
+            {
+                return ExportResult::Error(e.to_string());
+            }
             for record in &records {
                 if let Err(e) = writer.serialize(record) {
                     return ExportResult::Error(e.to_string());
@@ -313,11 +325,9 @@ pub(crate) fn show_dialog(
                                 export_duplicates(t, duplicate_groups, state.format, &path)
                             }
                             ExportScope::CurrentView => {
-                                export_tree(t, treemap_root, state.scope, state.format, &path)
+                                export_tree(t, treemap_root, state.format, &path)
                             }
-                            ExportScope::FullTree => {
-                                export_tree(t, t.root(), state.scope, state.format, &path)
-                            }
+                            ExportScope::FullTree => export_tree(t, t.root(), state.format, &path),
                         },
                         None => ExportResult::Error("No scan data available.".to_string()),
                     });
@@ -407,13 +417,7 @@ mod tests {
         let tmp = tempfile::NamedTempFile::new().unwrap();
         let path = tmp.path().to_path_buf();
 
-        let result = export_tree(
-            &tree,
-            tree.root(),
-            ExportScope::FullTree,
-            ExportFormat::Csv,
-            &path,
-        );
+        let result = export_tree(&tree, tree.root(), ExportFormat::Csv, &path);
         match result {
             ExportResult::Success { record_count, .. } => {
                 assert_eq!(record_count, 4);
@@ -454,13 +458,7 @@ mod tests {
         let tmp = tempfile::NamedTempFile::new().unwrap();
         let path = tmp.path().to_path_buf();
 
-        let result = export_tree(
-            &tree,
-            tree.root(),
-            ExportScope::FullTree,
-            ExportFormat::Json,
-            &path,
-        );
+        let result = export_tree(&tree, tree.root(), ExportFormat::Json, &path);
         match result {
             ExportResult::Success { record_count, .. } => {
                 assert_eq!(record_count, 4);
@@ -509,13 +507,7 @@ mod tests {
         let tmp = tempfile::NamedTempFile::new().unwrap();
         let path = tmp.path().to_path_buf();
 
-        let result = export_tree(
-            &tree,
-            idx_a,
-            ExportScope::CurrentView,
-            ExportFormat::Json,
-            &path,
-        );
+        let result = export_tree(&tree, idx_a, ExportFormat::Json, &path);
         match result {
             ExportResult::Success { record_count, .. } => {
                 assert_eq!(record_count, 3);
