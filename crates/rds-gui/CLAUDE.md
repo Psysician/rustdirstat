@@ -1,13 +1,14 @@
 # crates/rds-gui/
 
-egui/eframe GUI shell with directory picker, scanner integration, directory tree view, extension statistics, cushion-shaded treemap renderer, panel synchronization, drill-down navigation, duplicate file detection panel, delete-to-trash, open-in-file-manager, custom command actions, and CSV/JSON export.
+egui/eframe GUI shell with directory picker, scanner integration, directory tree view, extension statistics, cushion-shaded treemap renderer, panel synchronization, drill-down navigation, duplicate file detection panel, delete-to-trash, open-in-file-manager, custom command actions, CSV/JSON export, config persistence, recent paths, and settings dialog.
 
 ## Files
 
 | File | What | When to read |
 | ---- | ---- | ------------ |
 | `Cargo.toml` | Crate manifest; depends on `eframe`, `egui`, `streemap`, `crossbeam-channel`, `tracing`, `rds-core`, `rds-scanner`, `rfd`, `trash`, `open`, `serde`, `serde_json`, `csv`; dev-dep `tempfile` | Modifying GUI dependencies |
-| `src/lib.rs` | `RustDirStatApp` with ScanPhase state machine, directory picker (rfd), scanner spawning, event drain loop, 3-panel layout with tree view + treemap + ext stats, breadcrumb navigation, PendingDelete state, confirm_delete flow, delete confirmation dialog, CommandEditorState, custom_commands, ExportDialogState, freed_bytes tracking, format_bytes utility | Modifying app state, scan lifecycle, layout, adding panel implementations, modifying delete action flow |
+| `src/lib.rs` | `RustDirStatApp` with ScanPhase state machine, directory picker (rfd), scanner spawning, event drain loop, 3-panel layout with tree view + treemap + ext stats, breadcrumb navigation, PendingDelete state, confirm_delete flow, delete confirmation dialog, CommandEditorState, custom_commands, ExportDialogState, freed_bytes tracking, format_bytes utility, config persistence via save callback, recent paths tracking/dropdown, settings dialog integration, `on_exit` save, `collect_config`/`save_config` helpers | Modifying app state, scan lifecycle, layout, adding panel implementations, modifying delete action flow, modifying config persistence |
+| `src/settings.rs` | `SettingsDialogState`, `show` (settings window with exclude patterns editor, sort order ComboBox, color scheme ComboBox, Apply/Cancel buttons) | Modifying settings dialog UI, adding new configuration options |
 | `src/actions.rs` | `execute_delete` (trash + tombstone), `cleanup_duplicate_groups` (prune stale entries after deletion), `open_in_file_manager` (reveal file/dir in native file manager), `open_file_revealing` (platform-specific file select), `execute_custom_command` (platform shell dispatch with {path} substitution) | Modifying file action logic |
 | `src/command_editor.rs` | `show` (command editor window: inline editing of custom commands, add/remove controls, close button) | Modifying command editor UI |
 | `src/export.rs` | `ExportFormat`, `ExportScope`, `ExportRecord`, `DuplicateExportRecord`, `ExportResult`, `ExportDialogState`, `export_tree` (DFS traversal + CSV/JSON write), `export_duplicates` (duplicate group flattening + CSV/JSON write), `default_filename`, `show_dialog` (export dialog window with format/scope ComboBox, rfd save dialog, result display) | Modifying export logic, adding export formats, modifying export dialog UI |
