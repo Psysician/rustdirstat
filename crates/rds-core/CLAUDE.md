@@ -6,7 +6,7 @@ Shared data types for all crates. Zero external dependencies beyond `serde`.
 
 | File | What | When to read |
 | ---- | ---- | ------------ |
-| `Cargo.toml` | Crate manifest; `serde` runtime dep, `serde_json` dev-dep only | Verifying zero-dep invariant, adding dependencies (must not) |
+| `Cargo.toml` | Crate manifest; `serde` runtime dep, `serde_json` + `criterion` dev-deps only | Verifying zero-dep invariant, adding dependencies (must not) |
 | `src/lib.rs` | Library root; re-exports all public types from the four submodules | Adding core types, understanding module structure |
 | `src/tree.rs` | `FileNode` (with `deleted` flag) + `DirTree` (arena-allocated `Vec<FileNode>` with `usize` indices, `tombstone()` for safe deletion, `new_with_capacity`/`from_root_with_capacity` constructors for pre-allocation) | Modifying tree structure, adding traversal methods, understanding index invariants, implementing delete operations |
 | `src/scan.rs` | `ScanEvent` enum, `ScanStats`, `ScanConfig`; scanner-to-GUI channel types | Modifying scan events, changing scan configuration defaults |

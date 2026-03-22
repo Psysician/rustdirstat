@@ -14,7 +14,7 @@ All struct sizes are for x86-64 (64-bit pointers, 8-byte `usize`).
 | `ScanEvent` | 136 | Largest variant is `NodeDiscovered` (embeds `FileNode`) |
 | `ScanStats` | 40 | Five `u64` fields |
 | `ScanConfig` | 72 | Includes `PathBuf` + `Vec<String>` + `Option<usize>` |
-| `TreemapRect` | 72 | Flat display rect with cushion coefficients |
+| `TreemapRect` | 96 | Flat display rect with cushion coefficients + aggregation metadata |
 | `CushionCoeffs` | 16 | Four `f32` parabolic ridge coefficients |
 | `TreemapLayout` | 40 | `Vec<TreemapRect>` + `Vec2` + `usize` |
 | `SubtreeStats` | 48 | Two `Vec<u64>` (sizes + file_counts) |
@@ -56,16 +56,16 @@ Projections for arena + auxiliary structures at various scales.
 | --------- | ------- | ----------- |
 | `path_to_index: HashMap<PathBuf, usize>` | ~(80 + avg_path_len) per entry, ~1.5x capacity overhead | ~160 MB |
 | `SubtreeStats` (two `Vec<u64>`) | 16 bytes per node | 16 MB |
-| `TreemapLayout` (`Vec<TreemapRect>`) | 72 bytes per rect, capped at 50k | 3.6 MB (capped) |
+| `TreemapLayout` (`Vec<TreemapRect>`) | 96 bytes per rect, capped at 50k | 4.8 MB (capped) |
 | Crossbeam channel buffer | 136 bytes x 4096 slots | 0.5 MB (fixed) |
 
 ### Total estimated memory
 
 | Node count | Arena | path_to_index | SubtreeStats | TreemapLayout | Channel | **Total** |
 | ---------- | ----- | ------------- | ------------ | ------------- | ------- | --------- |
-| 100,000 | 15 MB | 16 MB | 1.6 MB | 3.6 MB | 0.5 MB | ~37 MB |
-| 1,000,000 | 152 MB | 160 MB | 16 MB | 3.6 MB | 0.5 MB | ~332 MB |
-| 10,000,000 | 1.52 GB | 1.6 GB | 160 MB | 3.6 MB | 0.5 MB | ~3.3 GB |
+| 100,000 | 15 MB | 16 MB | 1.6 MB | 4.8 MB | 0.5 MB | ~38 MB |
+| 1,000,000 | 152 MB | 160 MB | 16 MB | 4.8 MB | 0.5 MB | ~333 MB |
+| 10,000,000 | 1.52 GB | 1.6 GB | 160 MB | 4.8 MB | 0.5 MB | ~3.3 GB |
 
 Note: `path_to_index` is dropped after scanning completes. Post-scan memory is significantly lower (arena + SubtreeStats + TreemapLayout).
 

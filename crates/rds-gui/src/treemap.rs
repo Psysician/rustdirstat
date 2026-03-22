@@ -168,7 +168,8 @@ pub struct TreemapRect {
     /// Accumulated cushion surface coefficients for shading.
     pub cushion: CushionCoeffs,
     /// When this rect is an aggregated "other" bucket, contains
-    /// `(file_count, total_bytes)` for the merged items.
+    /// `(item_count, total_bytes)` for the merged items. `item_count`
+    /// includes both files and directories.
     pub aggregated_count: Option<(u64, u64)>,
 }
 
@@ -602,8 +603,10 @@ pub(crate) fn show(
     }
 
     // Double-click to drill into subdirectory. (ref: DL-005)
+    // Skip aggregated "other" rects — they don't map to a single tree node.
     if response.double_clicked()
         && let Some(idx) = hovered_index
+        && idx != usize::MAX
         && let Some(target) = find_drill_target(tree, idx, *treemap_root)
     {
         *treemap_root = target;
