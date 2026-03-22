@@ -23,8 +23,8 @@ Registry of all project documentation, classified by tier for navigation.
 | `crates/rds-core/src/CLAUDE.md` | Core source files index: tree, scan, config, stats modules |
 | `crates/rds-scanner/CLAUDE.md` | Scanner crate AI context: jwalk parallel traversal, exclude pattern filtering, event streaming |
 | `crates/rds-scanner/README.md` | Ordering invariant, two-level abort design, skip_hidden parity, error sources |
-| `crates/rds-gui/CLAUDE.md` | GUI crate AI context: dir picker, scanner integration, tree view, panel layout, settings dialog, config persistence |
-| `crates/rds-gui/src/CLAUDE.md` | GUI source files index: lib, tree_view, ext_stats, treemap, duplicates, actions, command_editor, export, settings |
+| `crates/rds-gui/CLAUDE.md` | GUI crate AI context: dir picker, scanner integration, tree view, panel layout, settings dialog, config persistence, toast notifications, error log, max-nodes dialog |
+| `crates/rds-gui/src/CLAUDE.md` | GUI source files index: lib, notifications, error_log, tree_view, ext_stats, treemap, duplicates, actions, command_editor, export, settings |
 | `docs/CLAUDE.md` | Documentation directory index |
 | `plans/CLAUDE.md` | Implementation plans directory index |
 
@@ -48,7 +48,8 @@ Registry of all project documentation, classified by tier for navigation.
 | `docs/superpowers/plans/2026-03-21-ms14-open-in-file-manager.md` | MS14 implementation plan: open crate, platform-specific file reveal (completed) |
 | `docs/superpowers/plans/2026-03-21-ms15-custom-commands.md` | MS15 implementation plan: custom shell commands, command editor UI, context menu integration (completed) |
 | `docs/superpowers/plans/2026-03-22-ms16-csv-json-export.md` | MS16 implementation plan: CSV/JSON export, export dialog, format/scope selection, rfd save dialog (completed) |
-| `docs/superpowers/plans/2026-03-22-ms17-configuration-persistence.md` | MS17 implementation plan: TOML config persistence, settings dialog, recent paths, exclude pattern filtering, auto-save (in dev) |
+| `docs/superpowers/plans/2026-03-22-ms17-configuration-persistence.md` | MS17 implementation plan: TOML config persistence, settings dialog, recent paths, exclude pattern filtering, auto-save (completed) |
+| `docs/superpowers/plans/2026-03-22-ms18-error-handling-edge-cases.md` | MS18 implementation plan: toast notifications, scan error log, max-nodes dialog, action error surfacing, structured tracing, empty dir hints (in dev) |
 
 ## Cross-Reference Map
 
@@ -75,3 +76,6 @@ Registry of all project documentation, classified by tier for navigation.
 | Settings dialog | `crates/rds-gui/src/settings.rs` | `lib.rs` (SettingsDialogState), `config.rs` (AppConfig fields) |
 | Exclude pattern filtering | `crates/rds-scanner/src/scanner.rs` | `config.rs` (exclude_patterns), `lib.rs` (pass to ScanConfig) |
 | Recent paths | `crates/rds-gui/src/lib.rs` | `config.rs` (recent_paths, max_recent_paths) |
+| Toast notifications | `crates/rds-gui/src/notifications.rs` | `lib.rs` (overlay render), `actions.rs`/`duplicates.rs`/`export.rs` (error surfacing) |
+| Scan error log | `crates/rds-gui/src/error_log.rs` | `lib.rs` (drain_events, error log panel), `scan.rs` (ScanError event) |
+| Structured tracing | `crates/rds-scanner/src/scanner.rs` | `duplicate.rs` (pipeline span), `main.rs` (RUST_LOG env filter) |
