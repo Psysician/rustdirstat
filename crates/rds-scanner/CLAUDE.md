@@ -8,8 +8,8 @@ Parallel filesystem traversal via `jwalk` and duplicate file detection via `sha2
 | ---- | ---- | ------------ |
 | `Cargo.toml` | Crate manifest; depends on `jwalk`, `crossbeam-channel`, `tracing`, `sha2`, `rayon`, `glob`, `rds-core` | Modifying scanner dependencies |
 | `src/lib.rs` | Library root; module declaration and public re-exports | Implementing scan logic, modifying public API |
-| `src/scanner.rs` | `Scanner` struct, `scan()` entry point, walk loop with exclude pattern filtering via `glob::Pattern` in `process_read_dir`, `FileEntry` collection, helper functions | Implementing traversal, modifying event emission, modifying exclude patterns, debugging scan behaviour |
-| `src/duplicate.rs` | `DuplicateDetector` 3-phase pipeline (size grouping, partial 4KB SHA-256, full SHA-256 via rayon) | Modifying duplicate detection logic, understanding hashing pipeline |
+| `src/scanner.rs` | `Scanner` struct, `scan()` entry point, walk loop with exclude pattern filtering via `glob::Pattern` in `process_read_dir`, `FileEntry` collection, structured tracing spans (scan/walk) | Implementing traversal, modifying event emission, modifying exclude patterns, debugging scan behaviour |
+| `src/duplicate.rs` | `DuplicateDetector` 3-phase pipeline (size grouping, partial 4KB SHA-256, full SHA-256 via rayon), tracing span | Modifying duplicate detection logic, understanding hashing pipeline |
 | `tests/scan_integration.rs` | Integration tests; real filesystem fixtures via `tempfile` | Adding scan tests, verifying DirTree correctness, debugging event ordering |
 | `tests/exclude_integration.rs` | Integration tests for exclude pattern filtering with tempfile fixtures | Adding exclude pattern tests, verifying glob matching behaviour |
 | `tests/duplicate_integration.rs` | Integration tests for `DuplicateDetector` with real tempfile fixtures (7 scenarios) | Adding duplicate detection tests, debugging detection pipeline |
