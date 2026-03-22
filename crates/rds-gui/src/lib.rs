@@ -266,6 +266,8 @@ impl RustDirStatApp {
         let config = ScanConfig {
             root: path,
             hash_duplicates: self.hash_duplicates_enabled,
+            exclude_patterns: self.exclude_patterns.clone(),
+            follow_symlinks: self.follow_symlinks,
             ..ScanConfig::default()
         };
 
