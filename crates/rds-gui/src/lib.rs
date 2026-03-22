@@ -23,6 +23,7 @@ use rds_core::tree::DirTree;
 mod actions;
 mod command_editor;
 mod duplicates;
+mod export;
 mod ext_stats;
 mod tree_view;
 mod treemap;
@@ -125,6 +126,8 @@ pub struct RustDirStatApp {
     custom_commands: Vec<CustomCommand>,
     /// Transient UI state for the custom command editor window.
     command_editor: CommandEditorState,
+    /// Export dialog state (format, scope, visibility, last result).
+    export_dialog: export::ExportDialogState,
 }
 
 impl Default for RustDirStatApp {
@@ -174,6 +177,7 @@ impl RustDirStatApp {
             delete_error: None,
             custom_commands: Vec::new(),
             command_editor: CommandEditorState::default(),
+            export_dialog: export::ExportDialogState::default(),
         }
     }
 
@@ -224,6 +228,7 @@ impl RustDirStatApp {
         self.freed_bytes = 0;
         self.delete_error = None;
         self.path_error = None;
+        self.export_dialog.last_result = None;
         self.phase = ScanPhase::Scanning;
         self.scan_path = Some(path.clone());
 
@@ -535,6 +540,15 @@ impl eframe::App for RustDirStatApp {
         // --- Command editor window ---
         command_editor::show(&mut self.custom_commands, &mut self.command_editor, ctx);
 
+        // --- Export dialog ---
+        export::show_dialog(
+            &mut self.export_dialog,
+            self.tree.as_ref(),
+            self.treemap_root,
+            &self.duplicate_groups,
+            ctx,
+        );
+
         // --- Toolbar ---
         egui::TopBottomPanel::top("toolbar").show(ctx, |ui| {
             ui.horizontal(|ui| {
@@ -551,8 +565,9 @@ impl eframe::App for RustDirStatApp {
                 // Text input fallback — always works, including WSL2.
                 // Reserve space for: Scan button (~50px) + separator (~10px) +
                 // Detect Duplicates checkbox (~150px) + separator (~10px) +
-                // Commands button (~90px).
-                const TOOLBAR_FIXED_CONTROLS_WIDTH: f32 = 310.0;
+                // Commands button (~90px) + separator (~10px) +
+                // Export button (~70px).
+                const TOOLBAR_FIXED_CONTROLS_WIDTH: f32 = 390.0;
                 let text_width = (ui.available_width() - TOOLBAR_FIXED_CONTROLS_WIDTH).max(100.0);
                 let response = ui.add(
                     egui::TextEdit::singleline(&mut self.path_input)
@@ -586,6 +601,16 @@ impl eframe::App for RustDirStatApp {
                 ui.separator();
                 if ui.button("Commands...").clicked() {
                     self.command_editor.show = !self.command_editor.show;
+                }
+
+                ui.separator();
+                let scan_complete = matches!(self.phase, ScanPhase::Complete(_));
+                if scan_complete {
+                    if ui.button("Export...").clicked() {
+                        self.export_dialog.show = !self.export_dialog.show;
+                    }
+                } else {
+                    ui.add_enabled(false, egui::Button::new("Export..."));
                 }
             });
         });
@@ -832,6 +857,7 @@ mod tests {
         assert_eq!(app.live_node_count, 0);
         assert!(app.custom_commands.is_empty());
         assert!(!app.command_editor.show);
+        assert!(!app.export_dialog.show);
     }
 
     #[test]
