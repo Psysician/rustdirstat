@@ -488,6 +488,18 @@ impl RustDirStatApp {
             }
         }
     }
+
+    fn collect_config(&self) -> rds_core::AppConfig {
+        rds_core::AppConfig {
+            custom_commands: self.custom_commands.clone(),
+            exclude_patterns: self.exclude_patterns.clone(),
+            color_scheme: self.color_scheme.clone(),
+            default_sort: self.default_sort.clone(),
+            recent_paths: self.recent_paths.clone(),
+            max_recent_paths: self.max_recent_paths,
+            follow_symlinks: self.follow_symlinks,
+        }
+    }
 }
 
 /// Formats a byte count as a human-readable string (B/KB/MB/GB/TB).
@@ -845,6 +857,13 @@ impl eframe::App for RustDirStatApp {
                 }
             }
         });
+    }
+
+    fn on_exit(&mut self, _gl: std::option::Option<&eframe::glow::Context>) {
+        let config = self.collect_config();
+        if let Some(ref save_fn) = self.config_save_fn {
+            save_fn(&config);
+        }
     }
 }
 
