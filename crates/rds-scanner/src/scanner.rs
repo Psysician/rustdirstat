@@ -365,6 +365,7 @@ impl Scanner {
     /// ceiling is hit. The `process_read_dir` callback reads this flag to stop
     /// spawning new work. A bool flag avoids atomic counter contention on the
     /// hot path; the main thread still enforces the exact limit (ref: DL-003).
+    #[allow(clippy::too_many_arguments)]
     fn walk_entries(
         config: &ScanConfig,
         tx: &Sender<ScanEvent>,

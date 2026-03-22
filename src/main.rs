@@ -51,11 +51,11 @@ fn save_config(config: &AppConfig, path: &Path) {
         }
     };
 
-    if let Some(parent) = path.parent() {
-        if let Err(e) = std::fs::create_dir_all(parent) {
-            tracing::warn!("Failed to create config directory {}: {}", parent.display(), e);
-            return;
-        }
+    if let Some(parent) = path.parent()
+        && let Err(e) = std::fs::create_dir_all(parent)
+    {
+        tracing::warn!("Failed to create config directory {}: {}", parent.display(), e);
+        return;
     }
 
     if let Err(e) = std::fs::write(path, contents) {

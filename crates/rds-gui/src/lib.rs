@@ -144,6 +144,7 @@ pub struct RustDirStatApp {
     /// Whether the scanner should follow symbolic links.
     follow_symlinks: bool,
     /// Optional callback invoked to persist config changes to disk.
+    #[allow(clippy::type_complexity)]
     config_save_fn: Option<Box<dyn Fn(&rds_core::AppConfig) + Send>>,
 }
 
