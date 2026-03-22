@@ -10,7 +10,7 @@ use glob::Pattern;
 use jwalk::WalkDir;
 use rds_core::scan::{ScanConfig, ScanEvent, ScanStats};
 use rds_core::tree::FileNode;
-use tracing::{debug, warn};
+use tracing::{debug, info_span, warn};
 
 use crate::duplicate::DuplicateDetector;
 
@@ -243,6 +243,9 @@ impl Scanner {
         cancel: Arc<AtomicBool>,
     ) -> JoinHandle<()> {
         thread::spawn(move || {
+            let scan_span = info_span!("scan", root = %config.root.display());
+            let _scan_guard = scan_span.enter();
+
             let start = Instant::now();
             let mut path_to_index: HashMap<PathBuf, usize> = HashMap::new();
             // path_to_index is only accessed from this thread (the jwalk result
@@ -292,20 +295,26 @@ impl Scanner {
                 .collect();
             let exclude = Arc::new(exclude);
 
-            Self::walk_entries(
-                &config,
-                &tx,
-                &cancel,
-                &max_nodes_reached,
-                &exclude,
-                &mut path_to_index,
-                &mut acc,
-                &mut file_entries,
-            );
+            {
+                let walk_span = info_span!("walk");
+                let _walk_guard = walk_span.enter();
+                Self::walk_entries(
+                    &config,
+                    &tx,
+                    &cancel,
+                    &max_nodes_reached,
+                    &exclude,
+                    &mut path_to_index,
+                    &mut acc,
+                    &mut file_entries,
+                );
+            }
 
             if let Some(ref entries) = file_entries
                 && !cancel.load(Ordering::Relaxed)
             {
+                let dup_span = info_span!("duplicate_detection", file_count = entries.len());
+                let _dup_guard = dup_span.enter();
                 let _ = tx.send(ScanEvent::DuplicateDetectionStarted {
                     file_count: entries.len() as u64,
                 });
