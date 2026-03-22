@@ -17,7 +17,7 @@ const MIN_RECT_DIM: f32 = 1.0;
 /// Maximum number of display rectangles before aggregation kicks in.
 /// Scans with more leaf files than this will merge excess items into
 /// "other" buckets to keep rendering under budget.
-pub(crate) const MAX_DISPLAY_RECTS: usize = 50_000;
+pub const MAX_DISPLAY_RECTS: usize = 50_000;
 
 /// Minimum rectangle dimension for cushion shading. Rects smaller
 /// than this in either dimension get flat fills. (ref: DL-005)
