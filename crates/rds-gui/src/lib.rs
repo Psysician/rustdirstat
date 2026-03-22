@@ -5,8 +5,8 @@
 //! tree (MS6), treemap (MS8), extension statistics (MS7), and duplicate
 //! file detection (MS12).
 //! The scanner runs on a background thread; events are drained via
-//! `try_recv()` each frame (bounded to 100 events to avoid blocking
-//! rendering). (ref: DL-003, DL-006)
+//! `try_recv()` each frame (bounded to `DRAIN_BATCH_SIZE` events to avoid
+//! blocking rendering). (ref: DL-003, DL-006)
 
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -173,6 +173,9 @@ impl RustDirStatApp {
     /// during scan. Caps treemap re-layout at 2x/second. (ref: DL-002)
     const LIVE_RECOMPUTE_INTERVAL: Duration = Duration::from_millis(500);
 
+    /// Maximum number of ScanEvent values drained from the channel per frame.
+    const DRAIN_BATCH_SIZE: usize = 5000;
+
     /// Creates a new app. If `initial_path` is `Some`, scanning starts
     /// automatically on the first frame. Config fields are populated from
     /// the provided `AppConfig`.
@@ -330,7 +333,7 @@ impl RustDirStatApp {
         self.treemap_layout = None;
     }
 
-    /// Drains up to 100 ScanEvent values from the channel per frame.
+    /// Drains up to `DRAIN_BATCH_SIZE` ScanEvent values from the channel per frame.
     /// Inserts nodes into the DirTree arena, updates progress counters,
     /// and transitions to Complete on ScanComplete or channel disconnect.
     ///
@@ -343,7 +346,7 @@ impl RustDirStatApp {
             None => return,
         };
 
-        for _ in 0..100 {
+        for _ in 0..Self::DRAIN_BATCH_SIZE {
             match rx.try_recv() {
                 Ok(ScanEvent::NodeDiscovered { node, parent_index }) => {
                     match parent_index {
