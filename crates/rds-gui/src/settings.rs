@@ -21,6 +21,16 @@ impl Default for SettingsDialogState {
     }
 }
 
+const COLOR_SCHEMES: &[(&str, &str)] = &[("default", "Default")];
+
+fn color_label(value: &str) -> &str {
+    COLOR_SCHEMES
+        .iter()
+        .find(|(v, _)| *v == value)
+        .map(|(_, label)| *label)
+        .unwrap_or("Default")
+}
+
 const SORT_OPTIONS: &[(&str, &str)] = &[
     ("size_desc", "Size (largest first)"),
     ("size_asc", "Size (smallest first)"),
@@ -95,7 +105,7 @@ pub(crate) fn show(
             ui.horizontal(|ui| {
                 ui.label("Scheme");
                 egui::ComboBox::from_id_salt("settings_color_scheme")
-                    .selected_text("Default")
+                    .selected_text(color_label(&state.color_scheme))
                     .show_ui(ui, |ui| {
                         ui.selectable_value(
                             &mut state.color_scheme,

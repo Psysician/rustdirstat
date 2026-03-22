@@ -932,10 +932,7 @@ impl eframe::App for RustDirStatApp {
     }
 
     fn on_exit(&mut self, _gl: std::option::Option<&eframe::glow::Context>) {
-        let config = self.collect_config();
-        if let Some(ref save_fn) = self.config_save_fn {
-            save_fn(&config);
-        }
+        self.save_config();
     }
 }
 

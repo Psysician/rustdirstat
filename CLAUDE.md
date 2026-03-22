@@ -10,7 +10,7 @@ Cross-platform disk usage analyzer. 4-crate Cargo workspace.
 | `Cargo.lock` | Committed lock file (binary crate) | Debugging reproducibility issues |
 | `justfile` | Developer task runner (build, test, lint, fmt, run, check, clean) | Running common dev commands |
 | `.gitignore` | Ignores `/target`; Cargo.lock is NOT ignored (binary crate) | Checking what is excluded from git |
-| `src/main.rs` | Binary entry point: CLI parsing (clap), tracing init, eframe window launch | Modifying CLI args, startup behaviour, window options |
+| `src/main.rs` | Binary entry point: CLI parsing (clap), tracing init, config load/save (TOML via `directories`), eframe window launch | Modifying CLI args, startup behaviour, window options, config persistence |
 | `README.md` | Architecture, design decisions, invariants | Understanding tree representation, scanner-GUI event flow, dependency strategy |
 
 ## Subdirectories
