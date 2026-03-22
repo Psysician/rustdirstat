@@ -822,6 +822,7 @@ impl eframe::App for RustDirStatApp {
                             scan_complete,
                             &mut self.pending_delete,
                             &self.custom_commands,
+                            &self.default_sort,
                             ui,
                         );
                     }

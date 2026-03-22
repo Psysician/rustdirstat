@@ -110,15 +110,37 @@ impl TreeViewState {
     }
 }
 
-/// Returns child indices of `index` sorted by subtree size descending.
-pub(crate) fn sorted_children(tree: &DirTree, index: usize, stats: &SubtreeStats) -> Vec<usize> {
+/// Returns child indices of `index` sorted according to `sort_order`.
+///
+/// Supported modes: `"size_desc"` (largest first), `"size_asc"` (smallest
+/// first), `"name_asc"` (alphabetical), `"name_desc"` (reverse alphabetical).
+/// Unknown values fall back to `"size_desc"`.
+pub(crate) fn sorted_children(
+    tree: &DirTree,
+    index: usize,
+    stats: &SubtreeStats,
+    sort_order: &str,
+) -> Vec<usize> {
     let mut children: Vec<usize> = tree
         .children(index)
         .iter()
         .copied()
         .filter(|&c| tree.get(c).is_some_and(|n| !n.deleted))
         .collect();
-    children.sort_by(|&a, &b| stats.size(b).cmp(&stats.size(a)));
+    match sort_order {
+        "size_asc" => children.sort_by(|&a, &b| stats.size(a).cmp(&stats.size(b))),
+        "name_asc" => children.sort_by(|&a, &b| {
+            let na = &tree.get(a).unwrap().name;
+            let nb = &tree.get(b).unwrap().name;
+            na.to_lowercase().cmp(&nb.to_lowercase())
+        }),
+        "name_desc" => children.sort_by(|&a, &b| {
+            let na = &tree.get(a).unwrap().name;
+            let nb = &tree.get(b).unwrap().name;
+            nb.to_lowercase().cmp(&na.to_lowercase())
+        }),
+        _ => children.sort_by(|&a, &b| stats.size(b).cmp(&stats.size(a))),
+    }
     children
 }
 
@@ -148,6 +170,7 @@ pub(crate) fn show(
     scan_complete: bool,
     pending_delete: &mut Option<PendingDelete>,
     custom_commands: &[CustomCommand],
+    sort_order: &str,
     ui: &mut egui::Ui,
 ) {
     // Detect external selection change (e.g., treemap click).
@@ -170,6 +193,7 @@ pub(crate) fn show(
             scan_complete,
             pending_delete,
             custom_commands,
+            sort_order,
             ui,
             0,
         );
@@ -189,6 +213,7 @@ fn render_node(
     scan_complete: bool,
     pending_delete: &mut Option<PendingDelete>,
     custom_commands: &[CustomCommand],
+    sort_order: &str,
     ui: &mut egui::Ui,
     depth: usize,
 ) {
@@ -275,7 +300,7 @@ fn render_node(
 
     // Recurse into children sorted by size descending.
     if is_expanded {
-        let children = sorted_children(tree, index, stats);
+        let children = sorted_children(tree, index, stats, sort_order);
         for child_idx in children {
             render_node(
                 tree,
@@ -286,6 +311,7 @@ fn render_node(
                 scan_complete,
                 pending_delete,
                 custom_commands,
+                sort_order,
                 ui,
                 depth + 1,
             );
@@ -419,7 +445,7 @@ mod tests {
         tree.insert(0, make_file("medium.txt", 500)); // index 3
 
         let stats = SubtreeStats::compute(&tree);
-        let sorted = sorted_children(&tree, 0, &stats);
+        let sorted = sorted_children(&tree, 0, &stats, "size_desc");
         assert_eq!(sorted, vec![2, 3, 1]);
     }
 
@@ -432,7 +458,7 @@ mod tests {
         tree.insert(big_dir, make_file("b.txt", 1000)); // index 4
 
         let stats = SubtreeStats::compute(&tree);
-        let sorted = sorted_children(&tree, 0, &stats);
+        let sorted = sorted_children(&tree, 0, &stats, "size_desc");
         assert_eq!(sorted, vec![3, 1]);
     }
 
@@ -440,7 +466,7 @@ mod tests {
     fn sorted_children_empty_dir() {
         let tree = DirTree::new("/root");
         let stats = SubtreeStats::compute(&tree);
-        let sorted = sorted_children(&tree, 0, &stats);
+        let sorted = sorted_children(&tree, 0, &stats, "size_desc");
         assert!(sorted.is_empty());
     }
 
@@ -562,7 +588,7 @@ mod tests {
         tree.tombstone(small);
 
         let stats = SubtreeStats::compute(&tree);
-        let sorted = sorted_children(&tree, 0, &stats);
+        let sorted = sorted_children(&tree, 0, &stats, "size_desc");
         // small.txt (index 1) should be excluded.
         assert_eq!(sorted, vec![2, 3]);
     }
