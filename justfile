@@ -40,7 +40,14 @@ bench:
 
 # Open benchmark report in browser
 bench-report:
-    open target/criterion/report/index.html
+    #!/usr/bin/env bash
+    if command -v xdg-open &> /dev/null; then
+        xdg-open target/criterion/report/index.html
+    elif command -v open &> /dev/null; then
+        open target/criterion/report/index.html
+    else
+        echo "Open target/criterion/report/index.html in your browser"
+    fi
 
 # Remove build artifacts
 clean:
