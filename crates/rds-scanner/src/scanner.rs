@@ -397,19 +397,17 @@ impl Scanner {
                 }
 
                 if !exclude_flag.is_empty() {
-                    for entry_result in children.iter_mut().flatten() {
-                        let name = entry_result.file_name.to_string_lossy();
-                        if exclude_flag.iter().any(|p| p.matches(&name)) {
-                            entry_result.read_children_path = None;
-                        }
-                    }
-                    children.retain(|entry_result| {
+                    children.retain_mut(|entry_result| {
                         let entry = match entry_result {
                             Ok(e) => e,
                             Err(_) => return true,
                         };
                         let name = entry.file_name.to_string_lossy();
-                        !exclude_flag.iter().any(|p| p.matches(&name))
+                        if exclude_flag.iter().any(|p| p.matches(&name)) {
+                            entry.read_children_path = None;
+                            return false;
+                        }
+                        true
                     });
                 }
             });

@@ -1,13 +1,24 @@
 //! Settings dialog for configuring exclude patterns, sort order, and color scheme.
 
 /// Transient UI state for the settings dialog window.
-#[derive(Default)]
 pub(crate) struct SettingsDialogState {
     pub show: bool,
     pub exclude_patterns: Vec<String>,
     pub new_pattern: String,
     pub default_sort: String,
     pub color_scheme: String,
+}
+
+impl Default for SettingsDialogState {
+    fn default() -> Self {
+        Self {
+            show: false,
+            exclude_patterns: Vec::new(),
+            new_pattern: String::new(),
+            default_sort: "size_desc".to_string(),
+            color_scheme: "default".to_string(),
+        }
+    }
 }
 
 const SORT_OPTIONS: &[(&str, &str)] = &[
