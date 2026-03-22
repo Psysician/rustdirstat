@@ -705,8 +705,7 @@ impl eframe::App for RustDirStatApp {
 
                 if ui.button("Settings...").clicked() {
                     if !self.settings_dialog.show {
-                        self.settings_dialog.exclude_patterns =
-                            self.exclude_patterns.clone();
+                        self.settings_dialog.exclude_patterns = self.exclude_patterns.clone();
                         self.settings_dialog.default_sort = self.default_sort.clone();
                         self.settings_dialog.color_scheme = self.color_scheme.clone();
                         self.settings_dialog.new_pattern = String::new();

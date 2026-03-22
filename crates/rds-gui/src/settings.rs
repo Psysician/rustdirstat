@@ -55,10 +55,7 @@ pub(crate) fn show(
             }
 
             ui.horizontal(|ui| {
-                ui.add(
-                    egui::TextEdit::singleline(&mut state.new_pattern)
-                        .hint_text("e.g. *.tmp"),
-                );
+                ui.add(egui::TextEdit::singleline(&mut state.new_pattern).hint_text("e.g. *.tmp"));
                 let can_add = !state.new_pattern.is_empty();
                 if ui.add_enabled(can_add, egui::Button::new("Add")).clicked() {
                     state
