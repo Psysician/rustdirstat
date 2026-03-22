@@ -366,8 +366,9 @@ impl RustDirStatApp {
                     return;
                 }
                 Ok(ScanEvent::ScanError { path, error }) => {
-                    self.scan_error_log.push(path, error.clone());
-                    if error.contains("max_nodes limit") {
+                    let is_max_nodes = error.contains("max_nodes limit");
+                    self.scan_error_log.push(path, error);
+                    if is_max_nodes {
                         self.max_nodes_dialog = true;
                     }
                 }
@@ -582,14 +583,21 @@ impl eframe::App for RustDirStatApp {
 
         // --- Max-nodes limit dialog ---
         if self.max_nodes_dialog {
+            let limit_msg = self
+                .scan_error_log
+                .entries()
+                .iter()
+                .find(|(_, e)| e.contains("max_nodes limit"))
+                .map(|(_, e)| e.clone())
+                .unwrap_or_else(|| {
+                    "The scan was stopped because the node limit was reached.".to_string()
+                });
             egui::Window::new("Scan Limit Reached")
                 .collapsible(false)
                 .resizable(false)
                 .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
                 .show(ctx, |ui| {
-                    ui.label(
-                        "The scan was stopped because the node limit (10,000,000) was reached.",
-                    );
+                    ui.label(&limit_msg);
                     ui.label("Partial results are still available below.");
                     ui.label("For more detailed analysis, try scanning a subdirectory instead.");
                     ui.separator();
