@@ -25,6 +25,7 @@ mod command_editor;
 mod duplicates;
 mod export;
 mod ext_stats;
+mod notifications;
 mod settings;
 mod tree_view;
 mod treemap;
@@ -143,6 +144,8 @@ pub struct RustDirStatApp {
     max_recent_paths: usize,
     /// Whether the scanner should follow symbolic links.
     follow_symlinks: bool,
+    /// Toast notification overlay.
+    notifications: notifications::Notifications,
     /// Optional callback invoked to persist config changes to disk.
     #[allow(clippy::type_complexity)]
     config_save_fn: Option<Box<dyn Fn(&rds_core::AppConfig) + Send>>,
@@ -208,6 +211,7 @@ impl RustDirStatApp {
             color_scheme: config.color_scheme,
             max_recent_paths: config.max_recent_paths,
             follow_symlinks: config.follow_symlinks,
+            notifications: notifications::Notifications::default(),
             config_save_fn: None,
         }
     }
@@ -946,6 +950,8 @@ impl eframe::App for RustDirStatApp {
                 }
             }
         });
+
+        self.notifications.show(ctx);
     }
 
     fn on_exit(&mut self, _gl: std::option::Option<&eframe::glow::Context>) {
