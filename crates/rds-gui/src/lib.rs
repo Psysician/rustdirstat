@@ -128,13 +128,27 @@ pub struct RustDirStatApp {
     command_editor: CommandEditorState,
     /// Export dialog state (format, scope, visibility, last result).
     export_dialog: export::ExportDialogState,
+    /// Glob patterns to exclude from scans.
+    exclude_patterns: Vec<String>,
+    /// Recently scanned paths for quick re-access.
+    recent_paths: Vec<PathBuf>,
+    /// Default sort order for tree/stats panels.
+    default_sort: String,
+    /// Active color scheme name.
+    color_scheme: String,
+    /// Maximum number of recent paths to retain.
+    max_recent_paths: usize,
+    /// Whether the scanner should follow symbolic links.
+    follow_symlinks: bool,
+    /// Optional callback invoked to persist config changes to disk.
+    config_save_fn: Option<Box<dyn Fn(&rds_core::AppConfig) + Send>>,
 }
 
 impl Default for RustDirStatApp {
-    /// Delegates to `new(None)` for backward compatibility with
-    /// callers that construct via Default. (ref: DL-007)
+    /// Delegates to `new(None, AppConfig::default())` for backward compatibility
+    /// with callers that construct via Default. (ref: DL-007)
     fn default() -> Self {
-        Self::new(None)
+        Self::new(None, rds_core::AppConfig::default())
     }
 }
 
@@ -144,8 +158,9 @@ impl RustDirStatApp {
     const LIVE_RECOMPUTE_INTERVAL: Duration = Duration::from_millis(500);
 
     /// Creates a new app. If `initial_path` is `Some`, scanning starts
-    /// automatically on the first frame.
-    pub fn new(initial_path: Option<PathBuf>) -> Self {
+    /// automatically on the first frame. Config fields are populated from
+    /// the provided `AppConfig`.
+    pub fn new(initial_path: Option<PathBuf>, config: rds_core::AppConfig) -> Self {
         Self {
             phase: ScanPhase::Idle,
             tree: None,
@@ -175,10 +190,22 @@ impl RustDirStatApp {
             pending_delete: None,
             freed_bytes: 0,
             delete_error: None,
-            custom_commands: Vec::new(),
+            custom_commands: config.custom_commands,
             command_editor: CommandEditorState::default(),
             export_dialog: export::ExportDialogState::default(),
+            exclude_patterns: config.exclude_patterns,
+            recent_paths: config.recent_paths,
+            default_sort: config.default_sort,
+            color_scheme: config.color_scheme,
+            max_recent_paths: config.max_recent_paths,
+            follow_symlinks: config.follow_symlinks,
+            config_save_fn: None,
         }
+    }
+
+    /// Sets the callback used to persist config changes to disk.
+    pub fn set_config_save_fn(&mut self, f: impl Fn(&rds_core::AppConfig) + Send + 'static) {
+        self.config_save_fn = Some(Box::new(f));
     }
 
     /// Cancels any running scan, resets state, and spawns a new Scanner
