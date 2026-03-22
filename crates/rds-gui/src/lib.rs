@@ -768,6 +768,7 @@ impl eframe::App for RustDirStatApp {
                         &mut self.treemap_root,
                         scan_complete,
                         &mut self.pending_delete,
+                        &self.custom_commands,
                         ui,
                     );
                     // Invalidate layout if drill-down changed the root.
