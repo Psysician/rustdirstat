@@ -547,4 +547,33 @@ mod tests {
         );
         assert_eq!(children.len(), 2);
     }
+
+    #[test]
+    fn filenode_memory_size_regression() {
+        let size = std::mem::size_of::<FileNode>();
+        println!("size_of::<FileNode>() = {size} bytes");
+        // FileNode contains String (24), u64 (8), bool (1), Vec<usize> (24),
+        // Option<usize> (16), Option<String> (24), Option<u64> (16), bool (1)
+        // With alignment, expect roughly 112-200 bytes on 64-bit.
+        assert!(
+            size <= 200,
+            "FileNode is {size} bytes, expected <= 200"
+        );
+        assert!(
+            size >= 80,
+            "FileNode is {size} bytes, expected >= 80 (suspiciously small)"
+        );
+    }
+
+    #[test]
+    fn dirtree_memory_size_regression() {
+        let size = std::mem::size_of::<DirTree>();
+        println!("size_of::<DirTree>() = {size} bytes");
+        // DirTree is a wrapper around Vec<FileNode>, so it should be 24 bytes
+        // (pointer + length + capacity) on 64-bit.
+        assert!(
+            size <= 64,
+            "DirTree is {size} bytes, expected <= 64"
+        );
+    }
 }
