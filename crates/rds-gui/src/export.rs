@@ -143,6 +143,89 @@ pub(crate) fn export_tree(
     }
 }
 
+pub(crate) fn export_duplicates(
+    tree: &rds_core::tree::DirTree,
+    groups: &[crate::DuplicateGroup],
+    format: ExportFormat,
+    output_path: &std::path::Path,
+) -> ExportResult {
+    let mut records = Vec::new();
+
+    for (group_idx, group) in groups.iter().enumerate() {
+        for &idx in &group.node_indices {
+            let node = match tree.get(idx) {
+                Some(n) => n,
+                None => continue,
+            };
+            if node.deleted {
+                continue;
+            }
+            let path = tree.path(idx).to_string_lossy().to_string();
+            records.push(DuplicateExportRecord {
+                group_number: group_idx + 1,
+                path,
+                name: node.name.clone(),
+                size_bytes: node.size,
+                size_human: crate::format_bytes(node.size),
+                extension: node.extension.clone().unwrap_or_default(),
+                wasted_bytes_in_group: group.wasted_bytes,
+            });
+        }
+    }
+
+    let file = match std::fs::File::create(output_path) {
+        Ok(f) => f,
+        Err(e) => return ExportResult::Error(e.to_string()),
+    };
+
+    let record_count = records.len();
+    let path_string = output_path.to_string_lossy().to_string();
+
+    match format {
+        ExportFormat::Csv => {
+            let mut writer = csv::Writer::from_writer(file);
+            if records.is_empty()
+                && let Err(e) = writer.write_record([
+                    "group_number",
+                    "path",
+                    "name",
+                    "size_bytes",
+                    "size_human",
+                    "extension",
+                    "wasted_bytes_in_group",
+                ])
+            {
+                return ExportResult::Error(e.to_string());
+            }
+            for record in &records {
+                if let Err(e) = writer.serialize(record) {
+                    return ExportResult::Error(e.to_string());
+                }
+            }
+            if let Err(e) = writer.flush() {
+                return ExportResult::Error(e.to_string());
+            }
+        }
+        ExportFormat::Json => {
+            if let Err(e) = serde_json::to_writer_pretty(file, &records) {
+                return ExportResult::Error(e.to_string());
+            }
+        }
+    }
+
+    ExportResult::Success {
+        path: path_string,
+        record_count,
+    }
+}
+
+pub(crate) fn default_filename(format: ExportFormat) -> String {
+    match format {
+        ExportFormat::Csv => "rustdirstat-export.csv".to_string(),
+        ExportFormat::Json => "rustdirstat-export.json".to_string(),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -305,5 +388,171 @@ mod tests {
         assert!(!names.contains(&"subdir_b"));
         assert!(!names.contains(&"b1.txt"));
         assert!(!names.contains(&"/root"));
+    }
+
+    fn build_duplicate_test_tree() -> (DirTree, usize, usize, usize, usize) {
+        let mut tree = DirTree::new("/root");
+        let subdir = make_dir_node("subdir");
+        let idx_sub = tree.insert(0, subdir);
+
+        let file_a = make_file_node("photo.jpg", 5000, Some("jpg"), None);
+        let idx_a = tree.insert(idx_sub, file_a);
+
+        let file_b = make_file_node("photo_copy.jpg", 5000, Some("jpg"), None);
+        let idx_b = tree.insert(idx_sub, file_b);
+
+        let file_c = make_file_node("data.csv", 3000, Some("csv"), None);
+        let idx_c = tree.insert(idx_sub, file_c);
+
+        let file_d = make_file_node("data_backup.csv", 3000, Some("csv"), None);
+        let idx_d = tree.insert(idx_sub, file_d);
+
+        (tree, idx_a, idx_b, idx_c, idx_d)
+    }
+
+    #[test]
+    fn export_duplicates_csv_correct_groups_and_fields() {
+        let (tree, idx_a, idx_b, idx_c, idx_d) = build_duplicate_test_tree();
+        let groups = vec![
+            crate::DuplicateGroup {
+                node_indices: vec![idx_a, idx_b],
+                wasted_bytes: 5000,
+            },
+            crate::DuplicateGroup {
+                node_indices: vec![idx_c, idx_d],
+                wasted_bytes: 3000,
+            },
+        ];
+
+        let tmp = tempfile::NamedTempFile::new().unwrap();
+        let path = tmp.path().to_path_buf();
+
+        let result = export_duplicates(&tree, &groups, ExportFormat::Csv, &path);
+        match result {
+            ExportResult::Success { record_count, .. } => {
+                assert_eq!(record_count, 4);
+            }
+            ExportResult::Error(e) => panic!("export_duplicates failed: {e}"),
+        }
+
+        let mut content = String::new();
+        std::fs::File::open(&path).unwrap().read_to_string(&mut content).unwrap();
+        let lines: Vec<&str> = content.lines().collect();
+
+        assert_eq!(lines[0], "group_number,path,name,size_bytes,size_human,extension,wasted_bytes_in_group");
+        assert_eq!(lines.len(), 5);
+
+        let group1_lines: Vec<&&str> = lines.iter().filter(|l| l.starts_with("1,")).collect();
+        assert_eq!(group1_lines.len(), 2);
+        for line in &group1_lines {
+            assert!(line.contains("5000"));
+            assert!(line.contains("jpg"));
+        }
+
+        let group2_lines: Vec<&&str> = lines.iter().filter(|l| l.starts_with("2,")).collect();
+        assert_eq!(group2_lines.len(), 2);
+        for line in &group2_lines {
+            assert!(line.contains("3000"));
+            assert!(line.contains("csv"));
+        }
+    }
+
+    #[test]
+    fn export_duplicates_json_correct_groups_and_fields() {
+        let (tree, idx_a, idx_b, idx_c, idx_d) = build_duplicate_test_tree();
+        let groups = vec![
+            crate::DuplicateGroup {
+                node_indices: vec![idx_a, idx_b],
+                wasted_bytes: 5000,
+            },
+            crate::DuplicateGroup {
+                node_indices: vec![idx_c, idx_d],
+                wasted_bytes: 3000,
+            },
+        ];
+
+        let tmp = tempfile::NamedTempFile::new().unwrap();
+        let path = tmp.path().to_path_buf();
+
+        let result = export_duplicates(&tree, &groups, ExportFormat::Json, &path);
+        match result {
+            ExportResult::Success { record_count, .. } => {
+                assert_eq!(record_count, 4);
+            }
+            ExportResult::Error(e) => panic!("export_duplicates failed: {e}"),
+        }
+
+        let mut content = String::new();
+        std::fs::File::open(&path).unwrap().read_to_string(&mut content).unwrap();
+        let parsed: Vec<serde_json::Value> = serde_json::from_str(&content).unwrap();
+
+        assert_eq!(parsed.len(), 4);
+
+        let group1: Vec<&serde_json::Value> = parsed.iter()
+            .filter(|v| v["group_number"] == 1)
+            .collect();
+        assert_eq!(group1.len(), 2);
+        for record in &group1 {
+            assert_eq!(record["size_bytes"], 5000);
+            assert_eq!(record["wasted_bytes_in_group"], 5000);
+            assert_eq!(record["extension"], "jpg");
+        }
+
+        let group2: Vec<&serde_json::Value> = parsed.iter()
+            .filter(|v| v["group_number"] == 2)
+            .collect();
+        assert_eq!(group2.len(), 2);
+        for record in &group2 {
+            assert_eq!(record["size_bytes"], 3000);
+            assert_eq!(record["wasted_bytes_in_group"], 3000);
+            assert_eq!(record["extension"], "csv");
+        }
+
+        let names: Vec<&str> = parsed.iter()
+            .map(|v| v["name"].as_str().unwrap())
+            .collect();
+        assert!(names.contains(&"photo.jpg"));
+        assert!(names.contains(&"photo_copy.jpg"));
+        assert!(names.contains(&"data.csv"));
+        assert!(names.contains(&"data_backup.csv"));
+    }
+
+    #[test]
+    fn export_duplicates_empty_groups() {
+        let tree = build_test_tree();
+        let groups: &[crate::DuplicateGroup] = &[];
+
+        let tmp = tempfile::NamedTempFile::new().unwrap();
+        let path = tmp.path().to_path_buf();
+
+        let result = export_duplicates(&tree, groups, ExportFormat::Csv, &path);
+        match result {
+            ExportResult::Success { record_count, .. } => {
+                assert_eq!(record_count, 0);
+            }
+            ExportResult::Error(e) => panic!("export_duplicates failed: {e}"),
+        }
+
+        let mut content = String::new();
+        std::fs::File::open(&path).unwrap().read_to_string(&mut content).unwrap();
+        let lines: Vec<&str> = content.lines().collect();
+        assert_eq!(lines.len(), 1);
+        assert_eq!(lines[0], "group_number,path,name,size_bytes,size_human,extension,wasted_bytes_in_group");
+
+        let tmp_json = tempfile::NamedTempFile::new().unwrap();
+        let path_json = tmp_json.path().to_path_buf();
+
+        let result_json = export_duplicates(&tree, groups, ExportFormat::Json, &path_json);
+        match result_json {
+            ExportResult::Success { record_count, .. } => {
+                assert_eq!(record_count, 0);
+            }
+            ExportResult::Error(e) => panic!("export_duplicates failed: {e}"),
+        }
+
+        let mut json_content = String::new();
+        std::fs::File::open(&path_json).unwrap().read_to_string(&mut json_content).unwrap();
+        let parsed: Vec<serde_json::Value> = serde_json::from_str(&json_content).unwrap();
+        assert!(parsed.is_empty());
     }
 }
