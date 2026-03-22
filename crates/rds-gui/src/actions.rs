@@ -88,7 +88,9 @@ fn open_file_revealing(path: &std::path::Path) -> Result<(), String> {
             .raw_arg(format!("/select,\"{}\"", path.display()))
             .spawn()
             .map_err(|e| e.to_string())?;
-        std::thread::spawn(move || { let _ = child.wait(); });
+        std::thread::spawn(move || {
+            let _ = child.wait();
+        });
         Ok(())
     }
 
@@ -99,7 +101,9 @@ fn open_file_revealing(path: &std::path::Path) -> Result<(), String> {
             .arg(path)
             .spawn()
             .map_err(|e| e.to_string())?;
-        std::thread::spawn(move || { let _ = child.wait(); });
+        std::thread::spawn(move || {
+            let _ = child.wait();
+        });
         Ok(())
     }
 
@@ -270,7 +274,11 @@ mod tests {
         };
 
         let result = execute_custom_command(&tree, file_idx, &cmd);
-        assert!(result.is_ok(), "execute_custom_command failed: {:?}", result.err());
+        assert!(
+            result.is_ok(),
+            "execute_custom_command failed: {:?}",
+            result.err()
+        );
     }
 
     #[test]

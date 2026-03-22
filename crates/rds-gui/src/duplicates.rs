@@ -63,7 +63,9 @@ pub(crate) fn show(
                                     ui.separator();
                                     for command in custom_commands {
                                         if ui.button(&command.name).clicked() {
-                                            let _ = crate::actions::execute_custom_command(tree, idx, command);
+                                            let _ = crate::actions::execute_custom_command(
+                                                tree, idx, command,
+                                            );
                                             ui.close();
                                         }
                                     }

@@ -23,10 +23,7 @@ pub(crate) fn show(
         .show(ctx, |ui| {
             for (i, cmd) in commands.iter_mut().enumerate() {
                 ui.horizontal(|ui| {
-                    ui.add(
-                        egui::TextEdit::singleline(&mut cmd.name)
-                            .hint_text("Name"),
-                    );
+                    ui.add(egui::TextEdit::singleline(&mut cmd.name).hint_text("Name"));
                     ui.add(
                         egui::TextEdit::singleline(&mut cmd.template)
                             .hint_text("Template (use {path})"),
@@ -40,10 +37,7 @@ pub(crate) fn show(
             ui.separator();
 
             ui.horizontal(|ui| {
-                ui.add(
-                    egui::TextEdit::singleline(&mut editor.new_name)
-                        .hint_text("Name"),
-                );
+                ui.add(egui::TextEdit::singleline(&mut editor.new_name).hint_text("Name"));
                 ui.add(
                     egui::TextEdit::singleline(&mut editor.new_template)
                         .hint_text("Template (use {path})"),
