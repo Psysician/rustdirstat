@@ -109,8 +109,44 @@ fn open_file_revealing(path: &std::path::Path) -> Result<(), String> {
 
     #[cfg(not(any(target_os = "windows", target_os = "macos")))]
     {
-        let target = path.parent().unwrap_or(path);
-        open::that_detached(target).map_err(|e| e.to_string())
+        // Try D-Bus FileManager1.ShowItems first (selects file in file manager).
+        // Falls back to opening parent directory if D-Bus is unavailable.
+        match dbus_show_items(path) {
+            Ok(()) => Ok(()),
+            Err(dbus_err) => {
+                tracing::debug!(
+                    "D-Bus file reveal failed, falling back to open parent: {dbus_err}"
+                );
+                let target = path.parent().unwrap_or(path);
+                open::that_detached(target).map_err(|e| e.to_string())
+            }
+        }
+    }
+}
+
+/// Attempts to reveal a file in the Linux file manager via D-Bus
+/// FileManager1.ShowItems. Returns Ok(()) if the D-Bus call succeeds,
+/// Err if dbus-send is not available or the call fails.
+#[cfg(not(any(target_os = "windows", target_os = "macos")))]
+fn dbus_show_items(path: &std::path::Path) -> Result<(), String> {
+    let canonical = std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
+    let uri = format!("file://{}", canonical.display());
+    let status = std::process::Command::new("dbus-send")
+        .arg("--session")
+        .arg("--dest=org.freedesktop.FileManager1")
+        .arg("--type=method_call")
+        .arg("/org/freedesktop/FileManager1")
+        .arg("org.freedesktop.FileManager1.ShowItems")
+        .arg(format!("array:string:{uri}"))
+        .arg("string:")
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status()
+        .map_err(|e| e.to_string())?;
+    if status.success() {
+        Ok(())
+    } else {
+        Err(format!("D-Bus FileManager1 exited with {status}"))
     }
 }
 

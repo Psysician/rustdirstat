@@ -39,11 +39,7 @@ pub enum ColorScheme {
 }
 
 impl ColorScheme {
-    pub const ALL: &[ColorScheme] = &[
-        ColorScheme::Default,
-        ColorScheme::Dark,
-        ColorScheme::Light,
-    ];
+    pub const ALL: &[ColorScheme] = &[ColorScheme::Default, ColorScheme::Dark, ColorScheme::Light];
 
     pub fn label(self) -> &'static str {
         match self {
