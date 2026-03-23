@@ -9,6 +9,7 @@ use std::sync::atomic::AtomicBool;
 
 use rds_core::AppConfig;
 use rds_core::scan::{ScanConfig, ScanEvent};
+use tracing_subscriber::EnvFilter;
 
 /// Command-line arguments. `path` is the root directory passed to the scanner.
 #[derive(Parser)]
@@ -128,7 +129,6 @@ fn run_scan_only(path: PathBuf) {
 fn main() -> eframe::Result {
     let cli = Cli::parse();
 
-    use tracing_subscriber::EnvFilter;
     tracing_subscriber::fmt()
         .with_env_filter(
             EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("warn")),

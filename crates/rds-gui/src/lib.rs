@@ -154,6 +154,8 @@ pub struct RustDirStatApp {
     follow_symlinks: bool,
     /// Whether to show the max-nodes limit dialog.
     max_nodes_dialog: bool,
+    /// Cached message for the max-nodes dialog, extracted once in drain_events.
+    max_nodes_message: Option<String>,
     /// Toast notification overlay.
     notifications: notifications::Notifications,
     /// Optional callback invoked to persist config changes to disk.
@@ -226,6 +228,7 @@ impl RustDirStatApp {
             max_recent_paths: config.max_recent_paths,
             follow_symlinks: config.follow_symlinks,
             max_nodes_dialog: false,
+            max_nodes_message: None,
             notifications: notifications::Notifications::default(),
             config_save_fn: None,
         }
@@ -285,6 +288,7 @@ impl RustDirStatApp {
         self.path_error = None;
         self.export_dialog.last_result = None;
         self.max_nodes_dialog = false;
+        self.max_nodes_message = None;
         self.phase = ScanPhase::Scanning;
         self.scan_path = Some(path.clone());
         self.track_recent_path(path.clone());
@@ -299,7 +303,7 @@ impl RustDirStatApp {
             follow_symlinks: self.follow_symlinks,
             ..ScanConfig::default()
         };
-        self.tree_capacity_hint = config.max_nodes.unwrap_or(100_000);
+        self.tree_capacity_hint = config.max_nodes.unwrap_or(100_000).min(100_000);
 
         let handle = rds_scanner::Scanner::scan(config, tx, cancel.clone());
 
@@ -382,10 +386,11 @@ impl RustDirStatApp {
                 }
                 Ok(ScanEvent::ScanError { path, error }) => {
                     let is_max_nodes = error.contains("max_nodes limit");
-                    self.scan_error_log.push(path, error);
                     if is_max_nodes {
+                        self.max_nodes_message = Some(error.clone());
                         self.max_nodes_dialog = true;
                     }
+                    self.scan_error_log.push(path, error);
                 }
                 Ok(ScanEvent::DuplicateFound { node_indices, .. }) => {
                     let size = node_indices
@@ -598,21 +603,15 @@ impl eframe::App for RustDirStatApp {
 
         // --- Max-nodes limit dialog ---
         if self.max_nodes_dialog {
-            let limit_msg = self
-                .scan_error_log
-                .entries()
-                .iter()
-                .find(|(_, e)| e.contains("max_nodes limit"))
-                .map(|(_, e)| e.clone())
-                .unwrap_or_else(|| {
-                    "The scan was stopped because the node limit was reached.".to_string()
-                });
+            let limit_msg = self.max_nodes_message.as_deref().unwrap_or(
+                "The scan was stopped because the node limit was reached.",
+            );
             egui::Window::new("Scan Limit Reached")
                 .collapsible(false)
                 .resizable(false)
                 .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
                 .show(ctx, |ui| {
-                    ui.label(&limit_msg);
+                    ui.label(limit_msg);
                     ui.label("Partial results are still available below.");
                     ui.label("For more detailed analysis, try scanning a subdirectory instead.");
                     ui.separator();
