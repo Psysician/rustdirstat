@@ -23,7 +23,7 @@ Registry of all project documentation, classified by tier for navigation.
 | `crates/rds-core/src/CLAUDE.md` | Core source files index: tree, scan, config, stats modules |
 | `crates/rds-scanner/CLAUDE.md` | Scanner crate AI context: jwalk parallel traversal, exclude pattern filtering, event streaming |
 | `crates/rds-scanner/README.md` | Ordering invariant, two-level abort design, skip_hidden parity, error sources |
-| `crates/rds-gui/CLAUDE.md` | GUI crate AI context: dir picker, scanner integration, tree view, panel layout, settings dialog, config persistence, toast notifications, error log, max-nodes dialog |
+| `crates/rds-gui/CLAUDE.md` | GUI crate AI context: dir picker, scanner integration, tree view, treemap (with aggregation), panel layout, settings, config persistence, toast notifications, error log, max-nodes dialog, bench-internals feature |
 | `crates/rds-gui/src/CLAUDE.md` | GUI source files index: lib, notifications, error_log, tree_view, ext_stats, treemap, duplicates, actions, command_editor, export, settings |
 | `docs/CLAUDE.md` | Documentation directory index |
 | `plans/CLAUDE.md` | Implementation plans directory index |
@@ -49,7 +49,9 @@ Registry of all project documentation, classified by tier for navigation.
 | `docs/superpowers/plans/2026-03-21-ms15-custom-commands.md` | MS15 implementation plan: custom shell commands, command editor UI, context menu integration (completed) |
 | `docs/superpowers/plans/2026-03-22-ms16-csv-json-export.md` | MS16 implementation plan: CSV/JSON export, export dialog, format/scope selection, rfd save dialog (completed) |
 | `docs/superpowers/plans/2026-03-22-ms17-configuration-persistence.md` | MS17 implementation plan: TOML config persistence, settings dialog, recent paths, exclude pattern filtering, auto-save (completed) |
-| `docs/superpowers/plans/2026-03-22-ms18-error-handling-edge-cases.md` | MS18 implementation plan: toast notifications, scan error log, max-nodes dialog, action error surfacing, structured tracing, empty dir hints (in dev) |
+| `docs/superpowers/plans/2026-03-22-ms18-error-handling-edge-cases.md` | MS18 implementation plan: toast notifications, scan error log, max-nodes dialog, action error surfacing, structured tracing, empty dir hints (completed) |
+| `docs/superpowers/plans/2026-03-22-ms19-performance-optimization.md` | MS19 implementation plan: criterion benchmarks, arena pre-allocation, treemap aggregation, event drain tuning, --scan-only CLI, memory audit (completed) |
+| `docs/benchmarks.md` | Memory usage audit: struct sizes, per-node heap cost, total projections at 100k/1M/10M, scan throughput, treemap rendering budget |
 
 ## Cross-Reference Map
 
@@ -79,3 +81,6 @@ Registry of all project documentation, classified by tier for navigation.
 | Toast notifications | `crates/rds-gui/src/notifications.rs` | `lib.rs` (overlay render), `actions.rs`/`duplicates.rs`/`export.rs` (error surfacing) |
 | Scan error log | `crates/rds-gui/src/error_log.rs` | `lib.rs` (drain_events, error log panel), `scan.rs` (ScanError event) |
 | Structured tracing | `crates/rds-scanner/src/scanner.rs` | `duplicate.rs` (pipeline span), `main.rs` (RUST_LOG env filter) |
+| Treemap aggregation | `crates/rds-gui/src/treemap.rs` | `lib.rs` (drain_events), `docs/benchmarks.md` (memory budget) |
+| Performance benchmarks | `crates/rds-core/benches/tree_bench.rs` | `crates/rds-gui/benches/treemap_bench.rs`, `docs/benchmarks.md`, `scripts/benchmark-comparison.sh` |
+| Memory budget | `docs/benchmarks.md` | `treemap.rs` (MAX_DISPLAY_RECTS), `tree.rs` (FileNode size), `scanner.rs` (pre-allocation) |
