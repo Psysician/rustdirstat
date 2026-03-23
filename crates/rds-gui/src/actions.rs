@@ -128,6 +128,7 @@ fn open_file_revealing(path: &std::path::Path) -> Result<(), String> {
 /// Encodes all bytes except unreserved characters (RFC 3986 Section 2.3) and `/`.
 #[cfg(not(any(target_os = "windows", target_os = "macos")))]
 fn path_to_file_uri(path: &std::path::Path) -> String {
+    use std::fmt::Write;
     use std::os::unix::ffi::OsStrExt;
     let bytes = path.as_os_str().as_bytes();
     let mut uri = String::with_capacity(7 + bytes.len() * 3);
@@ -138,7 +139,7 @@ fn path_to_file_uri(path: &std::path::Path) -> String {
                 uri.push(*byte as char);
             }
             _ => {
-                uri.push_str(&format!("%{byte:02X}"));
+                let _ = write!(uri, "%{byte:02X}");
             }
         }
     }
@@ -458,6 +459,41 @@ mod tests {
             "execute_custom_command failed: {:?}",
             result.err()
         );
+    }
+
+    #[test]
+    #[cfg(not(any(target_os = "windows", target_os = "macos")))]
+    fn path_to_file_uri_simple_path() {
+        let uri = path_to_file_uri(std::path::Path::new("/home/user/file.txt"));
+        assert_eq!(uri, "file:///home/user/file.txt");
+    }
+
+    #[test]
+    #[cfg(not(any(target_os = "windows", target_os = "macos")))]
+    fn path_to_file_uri_with_spaces() {
+        let uri = path_to_file_uri(std::path::Path::new("/home/user/my file.txt"));
+        assert_eq!(uri, "file:///home/user/my%20file.txt");
+    }
+
+    #[test]
+    #[cfg(not(any(target_os = "windows", target_os = "macos")))]
+    fn path_to_file_uri_with_special_chars() {
+        let uri = path_to_file_uri(std::path::Path::new("/tmp/a&b=c#d.txt"));
+        assert_eq!(uri, "file:///tmp/a%26b%3Dc%23d.txt");
+    }
+
+    #[test]
+    #[cfg(not(any(target_os = "windows", target_os = "macos")))]
+    fn path_to_file_uri_with_unicode() {
+        let uri = path_to_file_uri(std::path::Path::new("/home/user/café.txt"));
+        assert_eq!(uri, "file:///home/user/caf%C3%A9.txt");
+    }
+
+    #[test]
+    #[cfg(not(any(target_os = "windows", target_os = "macos")))]
+    fn path_to_file_uri_preserves_unreserved() {
+        let uri = path_to_file_uri(std::path::Path::new("/a-b_c.d~e/Z09"));
+        assert_eq!(uri, "file:///a-b_c.d~e/Z09");
     }
 
     #[test]
