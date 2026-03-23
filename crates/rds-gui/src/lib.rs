@@ -601,6 +601,14 @@ impl eframe::App for RustDirStatApp {
             ctx.request_repaint();
         }
 
+        // --- Apply theme based on color scheme setting ---
+        let theme_pref = match self.color_scheme {
+            rds_core::ColorScheme::Default => egui::ThemePreference::System,
+            rds_core::ColorScheme::Dark => egui::ThemePreference::Dark,
+            rds_core::ColorScheme::Light => egui::ThemePreference::Light,
+        };
+        ctx.set_theme(theme_pref);
+
         // --- Max-nodes limit dialog ---
         if self.max_nodes_dialog {
             let limit_msg = self
