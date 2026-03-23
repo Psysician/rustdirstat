@@ -109,8 +109,66 @@ fn open_file_revealing(path: &std::path::Path) -> Result<(), String> {
 
     #[cfg(not(any(target_os = "windows", target_os = "macos")))]
     {
-        let target = path.parent().unwrap_or(path);
-        open::that_detached(target).map_err(|e| e.to_string())
+        // Try D-Bus FileManager1.ShowItems first (selects file in file manager).
+        // Falls back to opening parent directory if D-Bus is unavailable.
+        match dbus_show_items(path) {
+            Ok(()) => Ok(()),
+            Err(dbus_err) => {
+                tracing::debug!(
+                    "D-Bus file reveal failed, falling back to open parent: {dbus_err}"
+                );
+                let target = path.parent().unwrap_or(path);
+                open::that_detached(target).map_err(|e| e.to_string())
+            }
+        }
+    }
+}
+
+/// Percent-encodes a filesystem path into a `file://` URI suitable for D-Bus.
+/// Encodes all bytes except unreserved characters (RFC 3986 Section 2.3) and `/`.
+#[cfg(not(any(target_os = "windows", target_os = "macos")))]
+fn path_to_file_uri(path: &std::path::Path) -> String {
+    use std::fmt::Write;
+    use std::os::unix::ffi::OsStrExt;
+    let bytes = path.as_os_str().as_bytes();
+    let mut uri = String::with_capacity(7 + bytes.len() * 3);
+    uri.push_str("file://");
+    for byte in bytes {
+        match byte {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'.' | b'_' | b'~' | b'/' => {
+                uri.push(*byte as char);
+            }
+            _ => {
+                let _ = write!(uri, "%{byte:02X}");
+            }
+        }
+    }
+    uri
+}
+
+/// Attempts to reveal a file in the Linux file manager via D-Bus
+/// FileManager1.ShowItems. Returns Ok(()) if the D-Bus call succeeds,
+/// Err if dbus-send is not available or the call fails.
+#[cfg(not(any(target_os = "windows", target_os = "macos")))]
+fn dbus_show_items(path: &std::path::Path) -> Result<(), String> {
+    let canonical = std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
+    let uri = path_to_file_uri(&canonical);
+    let status = std::process::Command::new("dbus-send")
+        .arg("--session")
+        .arg("--dest=org.freedesktop.FileManager1")
+        .arg("--type=method_call")
+        .arg("/org/freedesktop/FileManager1")
+        .arg("org.freedesktop.FileManager1.ShowItems")
+        .arg(format!("array:string:{uri}"))
+        .arg("string:")
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status()
+        .map_err(|e| e.to_string())?;
+    if status.success() {
+        Ok(())
+    } else {
+        Err(format!("D-Bus FileManager1 exited with {status}"))
     }
 }
 
@@ -401,6 +459,41 @@ mod tests {
             "execute_custom_command failed: {:?}",
             result.err()
         );
+    }
+
+    #[test]
+    #[cfg(not(any(target_os = "windows", target_os = "macos")))]
+    fn path_to_file_uri_simple_path() {
+        let uri = path_to_file_uri(std::path::Path::new("/home/user/file.txt"));
+        assert_eq!(uri, "file:///home/user/file.txt");
+    }
+
+    #[test]
+    #[cfg(not(any(target_os = "windows", target_os = "macos")))]
+    fn path_to_file_uri_with_spaces() {
+        let uri = path_to_file_uri(std::path::Path::new("/home/user/my file.txt"));
+        assert_eq!(uri, "file:///home/user/my%20file.txt");
+    }
+
+    #[test]
+    #[cfg(not(any(target_os = "windows", target_os = "macos")))]
+    fn path_to_file_uri_with_special_chars() {
+        let uri = path_to_file_uri(std::path::Path::new("/tmp/a&b=c#d.txt"));
+        assert_eq!(uri, "file:///tmp/a%26b%3Dc%23d.txt");
+    }
+
+    #[test]
+    #[cfg(not(any(target_os = "windows", target_os = "macos")))]
+    fn path_to_file_uri_with_unicode() {
+        let uri = path_to_file_uri(std::path::Path::new("/home/user/café.txt"));
+        assert_eq!(uri, "file:///home/user/caf%C3%A9.txt");
+    }
+
+    #[test]
+    #[cfg(not(any(target_os = "windows", target_os = "macos")))]
+    fn path_to_file_uri_preserves_unreserved() {
+        let uri = path_to_file_uri(std::path::Path::new("/a-b_c.d~e/Z09"));
+        assert_eq!(uri, "file:///a-b_c.d~e/Z09");
     }
 
     #[test]

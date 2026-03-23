@@ -51,6 +51,7 @@ Registry of all project documentation, classified by tier for navigation.
 | `docs/superpowers/plans/2026-03-22-ms17-configuration-persistence.md` | MS17 implementation plan: TOML config persistence, settings dialog, recent paths, exclude pattern filtering, auto-save (completed) |
 | `docs/superpowers/plans/2026-03-22-ms18-error-handling-edge-cases.md` | MS18 implementation plan: toast notifications, scan error log, max-nodes dialog, action error surfacing, structured tracing, empty dir hints (completed) |
 | `docs/superpowers/plans/2026-03-22-ms19-performance-optimization.md` | MS19 implementation plan: criterion benchmarks, arena pre-allocation, treemap aggregation, event drain tuning, --scan-only CLI, memory audit (completed) |
+| `docs/superpowers/plans/2026-03-23-ms20-cross-platform-polish.md` | MS20 implementation plan: dark/light/system theme via ThemePreference, keyboard shortcuts (Ctrl+O, Escape, F5, Backspace), D-Bus Linux file reveal, minimum viewport size (completed) |
 | `docs/benchmarks.md` | Memory usage audit: struct sizes, per-node heap cost, total projections at 100k/1M/10M, scan throughput, treemap rendering budget |
 
 ## Cross-Reference Map
@@ -84,3 +85,6 @@ Registry of all project documentation, classified by tier for navigation.
 | Treemap aggregation | `crates/rds-gui/src/treemap.rs` | `lib.rs` (drain_events), `docs/benchmarks.md` (memory budget) |
 | Performance benchmarks | `crates/rds-core/benches/tree_bench.rs` | `crates/rds-gui/benches/treemap_bench.rs`, `docs/benchmarks.md`, `scripts/benchmark-comparison.sh` |
 | Memory budget | `docs/benchmarks.md` | `treemap.rs` (MAX_DISPLAY_RECTS), `tree.rs` (FileNode size), `scanner.rs` (pre-allocation) |
+| Theme support | `crates/rds-gui/src/lib.rs` | `config.rs` (ColorScheme enum), `settings.rs` (color scheme dropdown) |
+| Keyboard shortcuts | `crates/rds-gui/src/lib.rs` | Ctrl+O (browse), Escape (cascade close), F5 (rescan), Backspace (navigate up) |
+| Linux file reveal | `crates/rds-gui/src/actions.rs` | D-Bus FileManager1.ShowItems with open parent fallback |

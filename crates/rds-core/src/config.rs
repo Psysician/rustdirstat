@@ -34,14 +34,18 @@ impl SortOrder {
 pub enum ColorScheme {
     #[default]
     Default,
+    Dark,
+    Light,
 }
 
 impl ColorScheme {
-    pub const ALL: &[ColorScheme] = &[ColorScheme::Default];
+    pub const ALL: &[ColorScheme] = &[ColorScheme::Default, ColorScheme::Dark, ColorScheme::Light];
 
     pub fn label(self) -> &'static str {
         match self {
-            Self::Default => "Default",
+            Self::Default => "System (auto)",
+            Self::Dark => "Dark",
+            Self::Light => "Light",
         }
     }
 }
@@ -157,5 +161,27 @@ mod tests {
     fn sort_order_labels() {
         assert_eq!(SortOrder::SizeDesc.label(), "Size (largest first)");
         assert_eq!(SortOrder::NameAsc.label(), "Name (A-Z)");
+    }
+
+    #[test]
+    fn color_scheme_dark_serde_roundtrip() {
+        let json = serde_json::to_string(&ColorScheme::Dark).unwrap();
+        assert_eq!(json, r#""dark""#);
+        let deserialized: ColorScheme = serde_json::from_str(&json).unwrap();
+        assert_eq!(deserialized, ColorScheme::Dark);
+    }
+
+    #[test]
+    fn color_scheme_light_serde_roundtrip() {
+        let json = serde_json::to_string(&ColorScheme::Light).unwrap();
+        assert_eq!(json, r#""light""#);
+        let deserialized: ColorScheme = serde_json::from_str(&json).unwrap();
+        assert_eq!(deserialized, ColorScheme::Light);
+    }
+
+    #[test]
+    fn color_scheme_default_backward_compat() {
+        let deserialized: ColorScheme = serde_json::from_str(r#""default""#).unwrap();
+        assert_eq!(deserialized, ColorScheme::Default);
     }
 }

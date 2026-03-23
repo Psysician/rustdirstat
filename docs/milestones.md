@@ -160,7 +160,7 @@ Profile and optimize for large scans (1M+ files). Treemap aggregation for >50k r
 
 ---
 
-## MS20 — Cross-Platform Polish
+## ~~MS20 — Cross-Platform Polish~~ DONE
 
 Platform-specific fixes: native file dialogs, keyboard shortcuts, HiDPI scaling, dark/light theme following OS preference. Test on Windows 10/11, macOS (arm64 + x86), Ubuntu/Fedora. Fix any platform-specific rendering issues.
 

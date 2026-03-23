@@ -5,7 +5,7 @@ rustdirstat/
   Cargo.toml                  # Workspace root; all dep versions in [workspace.dependencies]
   Cargo.lock                  # Committed (binary crate — reproducible builds)
   src/
-    main.rs                   # CLI parsing (clap), --scan-only headless mode, tracing init with RUST_LOG env filter, config load/save (TOML via directories), eframe window launch
+    main.rs                   # CLI parsing (clap), --scan-only headless mode, tracing init with RUST_LOG env filter, config load/save (TOML via directories), eframe window launch (1024x768 default, 640x480 minimum)
   crates/
     rds-core/                 # Shared data types — ZERO deps beyond serde
       Cargo.toml
@@ -15,7 +15,7 @@ rustdirstat/
         lib.rs                # Re-exports all public types from submodules
         tree.rs               # FileNode (with deleted flag) + DirTree arena (Vec<FileNode> with usize indices, tombstone(), new_with_capacity/from_root_with_capacity)
         scan.rs               # ScanEvent enum, ScanConfig, ScanStats
-        config.rs             # AppConfig + CustomCommand (TOML-deserializable)
+        config.rs             # AppConfig + CustomCommand + ColorScheme enum (Default/Dark/Light) (TOML-deserializable)
         stats.rs              # ExtensionStats, HslColor, color_for_extension(), compute_extension_stats() (filters deleted nodes)
       benches/
         tree_bench.rs         # Criterion benchmarks: insert_nodes, subtree_size, compute_extension_stats at 1k-1M scale
@@ -35,14 +35,14 @@ rustdirstat/
       Cargo.toml              # Deps: eframe, egui, egui-notify, streemap, crossbeam-channel, rds-core, rds-scanner, rfd, trash, open, serde, serde_json, csv; bench-internals feature
       CLAUDE.md
       src/
-        lib.rs                # RustDirStatApp: ScanPhase state machine, dir picker, scanner integration, event drain (DRAIN_BATCH_SIZE=5000), tree_capacity_hint pre-allocation, 3-panel layout, config persistence, recent paths, PendingDelete, confirm_delete, toast notifications, scan error log panel, max-nodes abort dialog; bench-internals re-exports
+        lib.rs                # RustDirStatApp: ScanPhase state machine, dir picker, scanner integration, event drain (DRAIN_BATCH_SIZE=5000), tree_capacity_hint pre-allocation, 3-panel layout, keyboard shortcuts (Ctrl+O, Escape, F5, Backspace), theme application via ThemePreference, config persistence, recent paths, PendingDelete, confirm_delete, toast notifications, scan error log panel, max-nodes abort dialog; bench-internals re-exports
         notifications.rs       # Notifications wrapper around egui_notify::Toasts — info/warning/error toasts with auto-dismiss
         error_log.rs           # ScanErrorLog (capped Vec of path+error pairs, overflow counter), error log panel rendering
         tree_view.rs           # SubtreeStats cache (filters deleted), TreeViewState, sorted tree rendering with context menu, empty dir "(empty)" hint
         ext_stats.rs           # hsl_to_color32, extension stats panel with stacked bar + Grid table
         treemap.rs             # CushionCoeffs, TreemapRect (aggregated_count), TreemapLayout, MAX_DISPLAY_RECTS (50k cap), recursive squarify with aggregation, cushion mesh render, right-click context menu
         duplicates.rs          # Duplicates bottom panel with collapsible groups, wasted space, context menu
-        actions.rs             # execute_delete (trash + tombstone), cleanup_duplicate_groups, open_in_file_manager, execute_custom_command
+        actions.rs             # execute_delete (trash + tombstone), cleanup_duplicate_groups, open_in_file_manager (D-Bus FileManager1.ShowItems on Linux, Explorer /select on Windows, open -R on macOS), execute_custom_command
         command_editor.rs      # Command editor window: inline editing of custom commands, add/remove controls
         export.rs              # CSV/JSON export: ExportFormat/ExportScope enums, export_tree (DFS + serialize), export_duplicates, export dialog UI
         settings.rs            # Settings dialog: SettingsDialogState, exclude patterns editor, sort order/color scheme ComboBox, Apply/Cancel
@@ -152,4 +152,5 @@ rustdirstat/
 | 17 | Configuration & Persistence | Done |
 | 18 | Error Handling & Edge Cases | Done |
 | 19 | Performance Optimization | Done |
-| 20-21 | See docs/milestones.md | Pending |
+| 20 | Cross-Platform Polish | Done |
+| 21 | See docs/milestones.md | Pending |

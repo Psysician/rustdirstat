@@ -601,6 +601,73 @@ impl eframe::App for RustDirStatApp {
             ctx.request_repaint();
         }
 
+        // --- Apply theme based on color scheme setting ---
+        let theme_pref = match self.color_scheme {
+            rds_core::ColorScheme::Default => egui::ThemePreference::System,
+            rds_core::ColorScheme::Dark => egui::ThemePreference::Dark,
+            rds_core::ColorScheme::Light => egui::ThemePreference::Light,
+        };
+        ctx.set_theme(theme_pref);
+
+        // --- Keyboard shortcuts ---
+        // Process shortcuts before UI rendering so key events are consumed
+        // before text fields or buttons process them.
+
+        // Ctrl/Cmd+O: Open browse dialog (same as Browse button).
+        if ctx.input_mut(|i| {
+            i.consume_shortcut(&egui::KeyboardShortcut::new(
+                egui::Modifiers::COMMAND,
+                egui::Key::O,
+            ))
+        }) && let Some(path) = rfd::FileDialog::new().pick_folder()
+        {
+            self.path_input = path.display().to_string();
+            self.start_scan(path);
+        }
+
+        // F5: Rescan current directory.
+        if ctx.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::F5))
+            && let Some(ref path) = self.scan_path
+        {
+            let path = path.clone();
+            self.start_scan(path);
+        }
+
+        // Escape: Close topmost dialog / cancel scan / deselect.
+        if ctx.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Escape)) {
+            if self.max_nodes_dialog {
+                self.max_nodes_dialog = false;
+            } else if self.pending_delete.is_some() {
+                self.pending_delete = None;
+                self.delete_error = None;
+            } else if self.settings_dialog.show {
+                self.settings_dialog.show = false;
+            } else if self.command_editor.show {
+                self.command_editor.show = false;
+            } else if self.export_dialog.show {
+                self.export_dialog.show = false;
+            } else if matches!(self.phase, ScanPhase::Scanning)
+                && let Some(ref cancel) = self.cancel
+            {
+                cancel.store(true, Ordering::Relaxed);
+            } else {
+                self.selected_node = None;
+            }
+        }
+
+        // Backspace: Navigate up from treemap drill-down (only when no text
+        // widget has keyboard focus, to avoid conflicting with text editing).
+        if !ctx.wants_keyboard_input()
+            && ctx.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Backspace))
+            && let Some(ref tree) = self.tree
+            && self.treemap_root != tree.root()
+            && let Some(node) = tree.get(self.treemap_root)
+            && let Some(parent) = node.parent
+        {
+            self.treemap_root = parent;
+            self.treemap_layout = None;
+        }
+
         // --- Max-nodes limit dialog ---
         if self.max_nodes_dialog {
             let limit_msg = self

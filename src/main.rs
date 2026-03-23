@@ -123,8 +123,7 @@ fn run_scan_only(path: PathBuf) {
 
 /// Initialises tracing, parses CLI args, loads config, and runs either
 /// scan-only mode or the native eframe event loop. Default window size is
-/// 1024x768; eframe enforces no minimum size, so this provides a usable
-/// starting layout for the treemap without requiring the user to resize first.
+/// 1024x768 with a 640x480 minimum to ensure the 3-panel layout remains usable.
 /// Returns eframe::Result so OS-level window errors propagate to the process exit code.
 fn main() -> eframe::Result {
     let cli = Cli::parse();
@@ -144,7 +143,9 @@ fn main() -> eframe::Result {
     let (config, config_path) = load_config();
 
     let native_options = eframe::NativeOptions {
-        viewport: egui::ViewportBuilder::default().with_inner_size([1024.0, 768.0]),
+        viewport: egui::ViewportBuilder::default()
+            .with_inner_size([1024.0, 768.0])
+            .with_min_inner_size([640.0, 480.0]),
         ..Default::default()
     };
 
