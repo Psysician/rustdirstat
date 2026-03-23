@@ -124,13 +124,33 @@ fn open_file_revealing(path: &std::path::Path) -> Result<(), String> {
     }
 }
 
+/// Percent-encodes a filesystem path into a `file://` URI suitable for D-Bus.
+/// Encodes all bytes except unreserved characters (RFC 3986 Section 2.3) and `/`.
+#[cfg(not(any(target_os = "windows", target_os = "macos")))]
+fn path_to_file_uri(path: &std::path::Path) -> String {
+    let path_str = path.to_string_lossy();
+    let mut uri = String::with_capacity(7 + path_str.len() * 3);
+    uri.push_str("file://");
+    for byte in path_str.as_bytes() {
+        match byte {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'.' | b'_' | b'~' | b'/' => {
+                uri.push(*byte as char);
+            }
+            _ => {
+                uri.push_str(&format!("%{byte:02X}"));
+            }
+        }
+    }
+    uri
+}
+
 /// Attempts to reveal a file in the Linux file manager via D-Bus
 /// FileManager1.ShowItems. Returns Ok(()) if the D-Bus call succeeds,
 /// Err if dbus-send is not available or the call fails.
 #[cfg(not(any(target_os = "windows", target_os = "macos")))]
 fn dbus_show_items(path: &std::path::Path) -> Result<(), String> {
     let canonical = std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
-    let uri = format!("file://{}", canonical.display());
+    let uri = path_to_file_uri(&canonical);
     let status = std::process::Command::new("dbus-send")
         .arg("--session")
         .arg("--dest=org.freedesktop.FileManager1")
