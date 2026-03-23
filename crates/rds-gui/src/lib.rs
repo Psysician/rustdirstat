@@ -603,9 +603,10 @@ impl eframe::App for RustDirStatApp {
 
         // --- Max-nodes limit dialog ---
         if self.max_nodes_dialog {
-            let limit_msg = self.max_nodes_message.as_deref().unwrap_or(
-                "The scan was stopped because the node limit was reached.",
-            );
+            let limit_msg = self
+                .max_nodes_message
+                .as_deref()
+                .unwrap_or("The scan was stopped because the node limit was reached.");
             egui::Window::new("Scan Limit Reached")
                 .collapsible(false)
                 .resizable(false)

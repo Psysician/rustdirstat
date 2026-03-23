@@ -278,7 +278,9 @@ impl Scanner {
             };
 
             let mut file_entries = if config.hash_duplicates {
-                Some(Vec::with_capacity(config.max_nodes.unwrap_or(100_000).min(100_000)))
+                Some(Vec::with_capacity(
+                    config.max_nodes.unwrap_or(100_000).min(100_000),
+                ))
             } else {
                 None
             };
