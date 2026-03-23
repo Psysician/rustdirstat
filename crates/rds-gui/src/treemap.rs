@@ -14,6 +14,11 @@ use rds_core::tree::DirTree;
 /// Minimum dimension (width or height) for a rect to be worth subdividing.
 const MIN_RECT_DIM: f32 = 1.0;
 
+/// Maximum number of display rectangles before aggregation kicks in.
+/// Scans with more leaf files than this will merge excess items into
+/// "other" buckets to keep rendering under budget.
+pub const MAX_DISPLAY_RECTS: usize = 50_000;
+
 /// Minimum rectangle dimension for cushion shading. Rects smaller
 /// than this in either dimension get flat fills. (ref: DL-005)
 const MIN_CUSHION_DIM: f32 = 4.0;
@@ -37,7 +42,7 @@ const LIGHT_Z: f32 = 0.816_496_6;
 
 /// Accumulated parabolic ridge coefficients for cushion shading.
 #[derive(Clone, Copy, Default, Debug)]
-pub(crate) struct CushionCoeffs {
+pub struct CushionCoeffs {
     pub a2x: f32,
     pub a1x: f32,
     pub a2y: f32,
@@ -149,8 +154,9 @@ fn build_cushion_mesh(
 }
 
 /// A single file rectangle in the treemap, ready for painting.
-pub(crate) struct TreemapRect {
-    /// Index into the `DirTree` arena.
+pub struct TreemapRect {
+    /// Index into the `DirTree` arena. `usize::MAX` is a sentinel for
+    /// aggregated "other" buckets that don't correspond to a single node.
     pub node_index: usize,
     /// Screen-space rectangle (relative to treemap origin).
     pub rect: egui::Rect,
@@ -161,6 +167,10 @@ pub(crate) struct TreemapRect {
     pub depth: u32,
     /// Accumulated cushion surface coefficients for shading.
     pub cushion: CushionCoeffs,
+    /// When this rect is an aggregated "other" bucket, contains
+    /// `(item_count, total_bytes)` for the merged items. `item_count`
+    /// includes both files and directories.
+    pub aggregated_count: Option<(u64, u64)>,
 }
 
 /// Intermediate item used during squarify layout.
@@ -171,7 +181,7 @@ struct LayoutItem {
 }
 
 /// Computed treemap layout: a flat list of file rectangles.
-pub(crate) struct TreemapLayout {
+pub struct TreemapLayout {
     pub rects: Vec<TreemapRect>,
     pub last_size: egui::Vec2,
     /// Root node used for this layout computation. Used for cache invalidation
@@ -194,6 +204,7 @@ impl TreemapLayout {
                 w: size.x,
                 h: size.y,
             };
+            let mut rect_count = 0usize;
             compute_recursive(
                 tree,
                 stats,
@@ -203,6 +214,7 @@ impl TreemapLayout {
                 INITIAL_HEIGHT,
                 0,
                 &mut rects,
+                &mut rect_count,
             );
         }
         TreemapLayout {
@@ -223,6 +235,7 @@ fn compute_recursive(
     height: f32,
     depth: u32,
     result: &mut Vec<TreemapRect>,
+    rect_count: &mut usize,
 ) {
     if bounds.w < MIN_RECT_DIM || bounds.h < MIN_RECT_DIM {
         return;
@@ -270,7 +283,27 @@ fn compute_recursive(
         |item, r| item.rect = r,
     );
 
-    for item in &items {
+    // If we already hit the cap, merge ALL items in this directory into
+    // a single "other" bucket covering the full bounds.
+    if *rect_count >= MAX_DISPLAY_RECTS {
+        let file_count = items.len() as u64;
+        let total_bytes: u64 = items.iter().map(|i| i.size as u64).sum();
+        result.push(TreemapRect {
+            node_index: usize::MAX,
+            rect: egui::Rect::from_min_size(
+                egui::pos2(bounds.x, bounds.y),
+                egui::vec2(bounds.w, bounds.h),
+            ),
+            color: egui::Color32::from_rgb(80, 80, 80),
+            depth,
+            cushion: parent_cushion,
+            aggregated_count: Some((file_count, total_bytes)),
+        });
+        *rect_count += 1;
+        return;
+    }
+
+    for (i, item) in items.iter().enumerate() {
         let node = match tree.get(item.node_index) {
             Some(n) => n,
             None => continue,
@@ -290,6 +323,7 @@ fn compute_recursive(
                 height * HEIGHT_FACTOR,
                 depth + 1,
                 result,
+                rect_count,
             );
         } else {
             let ext = node.extension.as_deref().unwrap_or("");
@@ -303,7 +337,43 @@ fn compute_recursive(
                 color,
                 depth,
                 cushion: child_cushion,
+                aggregated_count: None,
             });
+            *rect_count += 1;
+        }
+
+        // If we hit the cap mid-loop, merge all REMAINING items into
+        // a single "other" bucket.
+        if *rect_count >= MAX_DISPLAY_RECTS && i + 1 < items.len() {
+            let remaining = &items[i + 1..];
+            let file_count = remaining.len() as u64;
+            let total_bytes: u64 = remaining.iter().map(|r| r.size as u64).sum();
+
+            // Compute bounding box of remaining items' squarified rects.
+            let mut min_x = f32::MAX;
+            let mut min_y = f32::MAX;
+            let mut max_x = f32::MIN;
+            let mut max_y = f32::MIN;
+            for r in remaining {
+                min_x = min_x.min(r.rect.x);
+                min_y = min_y.min(r.rect.y);
+                max_x = max_x.max(r.rect.x + r.rect.w);
+                max_y = max_y.max(r.rect.y + r.rect.h);
+            }
+
+            result.push(TreemapRect {
+                node_index: usize::MAX,
+                rect: egui::Rect::from_min_size(
+                    egui::pos2(min_x, min_y),
+                    egui::vec2(max_x - min_x, max_y - min_y),
+                ),
+                color: egui::Color32::from_rgb(80, 80, 80),
+                depth,
+                cushion: parent_cushion,
+                aggregated_count: Some((file_count, total_bytes)),
+            });
+            *rect_count += 1;
+            break;
         }
     }
 }
@@ -375,8 +445,12 @@ pub(crate) fn show(
     let offset = response.rect.min.to_vec2();
 
     // Helper: dim a color to 30% brightness when extension filter is active
-    // and the node doesn't match. (ref: DL-002)
+    // and the node doesn't match. Aggregated "other" rects keep their neutral
+    // gray to remain visible as landmarks. (ref: DL-002)
     let effective_color = |rect_info: &TreemapRect| -> egui::Color32 {
+        if rect_info.node_index == usize::MAX {
+            return rect_info.color;
+        }
         if let Some(ext) = highlighted_extension {
             let matches = tree
                 .get(rect_info.node_index)
@@ -427,7 +501,9 @@ pub(crate) fn show(
     }
 
     // Highlight selected node with a white border. (ref: MS8 DL-008)
+    // Skip sentinel index (aggregated "other" buckets).
     if let Some(sel_idx) = *selected
+        && sel_idx != usize::MAX
         && let Some(hit) = layout.rects.iter().find(|r| r.node_index == sel_idx)
     {
         let abs_rect = hit.rect.translate(offset);
@@ -440,43 +516,54 @@ pub(crate) fn show(
     }
 
     // Find which rectangle the pointer is hovering over.
-    let hovered_index = response.hover_pos().and_then(|pos| {
+    let hovered_rect = response.hover_pos().and_then(|pos| {
         let rel = pos - offset;
-        layout
-            .rects
-            .iter()
-            .find(|r| r.rect.contains(rel))
-            .map(|r| r.node_index)
+        layout.rects.iter().find(|r| r.rect.contains(rel))
     });
+    let hovered_index = hovered_rect.map(|r| r.node_index);
 
     // Hover tooltip: full path + human-readable size. (ref: MS8 DL-009)
-    if let Some(idx) = hovered_index
-        && let Some(node) = tree.get(idx)
-    {
-        let path = tree.path(idx);
-        #[allow(deprecated)]
-        egui::show_tooltip_at_pointer(ui.ctx(), ui.layer_id(), response.id.with("tip"), |ui| {
-            ui.label(path.display().to_string());
-            ui.label(crate::format_bytes(node.size));
-        });
+    // For aggregated rects, show file count and total size instead.
+    if let Some(rect_info) = hovered_rect {
+        if let Some((count, bytes)) = rect_info.aggregated_count {
+            #[allow(deprecated)]
+            egui::show_tooltip_at_pointer(ui.ctx(), ui.layer_id(), response.id.with("tip"), |ui| {
+                ui.label(format!(
+                    "{count} items ({} total)",
+                    crate::format_bytes(bytes)
+                ));
+            });
+        } else if let Some(node) = tree.get(rect_info.node_index) {
+            let path = tree.path(rect_info.node_index);
+            #[allow(deprecated)]
+            egui::show_tooltip_at_pointer(ui.ctx(), ui.layer_id(), response.id.with("tip"), |ui| {
+                ui.label(path.display().to_string());
+                ui.label(crate::format_bytes(node.size));
+            });
+        }
     }
 
-    // Click to select node.
+    // Click to select node. Don't select aggregated "other" buckets.
     if response.clicked() {
-        *selected = hovered_index;
+        if hovered_index == Some(usize::MAX) {
+            // Don't select the sentinel.
+        } else {
+            *selected = hovered_index;
+        }
     }
 
     // Re-interact to ensure secondary click detection works reliably.
     let response = response.interact(egui::Sense::click());
 
-    // Right-click to select node for context menu.
-    if response.secondary_clicked() {
+    // Right-click to select node for context menu. Skip sentinel.
+    if response.secondary_clicked() && hovered_index != Some(usize::MAX) {
         *selected = hovered_index;
     }
 
     // Context menu for selected node (only when scan is complete).
     // Guard attachment so right-clicking empty space doesn't show an empty popup.
-    if scan_complete && selected.is_some() {
+    // Skip for sentinel index (aggregated "other" buckets).
+    if scan_complete && selected.is_some() && *selected != Some(usize::MAX) {
         response.context_menu(|ui| {
             if let Some(sel_idx) = *selected {
                 if ui.button("Open in File Manager").clicked() {
@@ -516,8 +603,10 @@ pub(crate) fn show(
     }
 
     // Double-click to drill into subdirectory. (ref: DL-005)
+    // Skip aggregated "other" rects — they don't map to a single tree node.
     if response.double_clicked()
         && let Some(idx) = hovered_index
+        && idx != usize::MAX
         && let Some(target) = find_drill_target(tree, idx, *treemap_root)
     {
         *treemap_root = target;
@@ -1196,5 +1285,114 @@ mod tests {
         assert_eq!(chain[1], (d1, "d1".to_string()));
         assert_eq!(chain[2], (d2, "d2".to_string()));
         assert_eq!(chain[3], (d3, "d3".to_string()));
+    }
+
+    // --- Aggregation tests ---
+
+    #[test]
+    fn aggregation_caps_rect_count() {
+        // 200 directories x 500 files = 100,000 leaf files.
+        let mut tree = DirTree::new("/root");
+        for d in 0..200 {
+            let dir = tree.insert(0, make_dir(&format!("dir_{d}")));
+            for f in 0..500 {
+                tree.insert(
+                    dir,
+                    make_file(&format!("file_{f}.rs"), (f as u64 + 1) * 10, Some("rs")),
+                );
+            }
+        }
+        let stats = SubtreeStats::compute(&tree);
+        let layout = TreemapLayout::compute(&tree, &stats, egui::vec2(800.0, 600.0), tree.root());
+
+        // Rect count should be capped near MAX_DISPLAY_RECTS, with some
+        // slack for directories that contribute rects before the cap.
+        assert!(
+            layout.rects.len() <= MAX_DISPLAY_RECTS + 200,
+            "expected <= {} rects, got {}",
+            MAX_DISPLAY_RECTS + 200,
+            layout.rects.len(),
+        );
+
+        // At least one aggregated rect should exist.
+        assert!(
+            layout.rects.iter().any(|r| r.aggregated_count.is_some()),
+            "expected at least one aggregated rect",
+        );
+    }
+
+    #[test]
+    fn aggregation_not_triggered_below_threshold() {
+        // 100 files — well below the 50k cap.
+        let mut tree = DirTree::new("/root");
+        for i in 0..100 {
+            tree.insert(
+                0,
+                make_file(&format!("file_{i}.rs"), (i as u64 + 1) * 100, Some("rs")),
+            );
+        }
+        let stats = SubtreeStats::compute(&tree);
+        let layout = TreemapLayout::compute(&tree, &stats, egui::vec2(800.0, 600.0), tree.root());
+
+        assert_eq!(layout.rects.len(), 100);
+        assert!(
+            layout.rects.iter().all(|r| r.aggregated_count.is_none()),
+            "no rects should be aggregated below the threshold",
+        );
+    }
+
+    #[test]
+    fn aggregated_rect_has_sentinel_index() {
+        // 200 dirs x 500 files = 100,000 — triggers aggregation.
+        let mut tree = DirTree::new("/root");
+        for d in 0..200 {
+            let dir = tree.insert(0, make_dir(&format!("dir_{d}")));
+            for f in 0..500 {
+                tree.insert(
+                    dir,
+                    make_file(&format!("file_{f}.rs"), (f as u64 + 1) * 10, Some("rs")),
+                );
+            }
+        }
+        let stats = SubtreeStats::compute(&tree);
+        let layout = TreemapLayout::compute(&tree, &stats, egui::vec2(800.0, 600.0), tree.root());
+
+        let aggregated = layout
+            .rects
+            .iter()
+            .find(|r| r.aggregated_count.is_some())
+            .expect("should have at least one aggregated rect");
+        assert_eq!(
+            aggregated.node_index,
+            usize::MAX,
+            "aggregated rect should use sentinel index",
+        );
+    }
+
+    #[test]
+    fn aggregated_rect_size_sum_matches() {
+        // 1 directory with 60,000 files of size 1 each.
+        let mut tree = DirTree::new("/root");
+        let dir = tree.insert(0, make_dir("big_dir"));
+        for f in 0..60_000 {
+            tree.insert(dir, make_file(&format!("f{f}.txt"), 1, Some("txt")));
+        }
+        let stats = SubtreeStats::compute(&tree);
+        let layout = TreemapLayout::compute(&tree, &stats, egui::vec2(800.0, 600.0), tree.root());
+
+        // Sum the area of all rects (both regular and aggregated).
+        let total_area: f32 = layout
+            .rects
+            .iter()
+            .map(|r| r.rect.width() * r.rect.height())
+            .sum();
+        let bounds_area = 800.0 * 600.0;
+
+        // Total area should approximately equal the treemap bounds area.
+        let ratio = total_area / bounds_area;
+        assert!(
+            (0.95..=1.05).contains(&ratio),
+            "total rect area ({total_area}) should approximately equal bounds area ({bounds_area}), ratio = {ratio}",
+        );
     }
 }

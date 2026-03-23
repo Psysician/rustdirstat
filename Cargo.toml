@@ -31,6 +31,7 @@ egui-notify = "0.21.0"
 glob = "0.3"
 walkdir = "2.5.0"
 tempfile = "3.27.0"
+criterion = { version = "0.5", features = ["html_reports"] }
 
 # Binary crate. Owns CLI parsing and eframe bootstrap; delegates scanning
 # and rendering to rds-scanner and rds-gui respectively.
@@ -41,10 +42,12 @@ edition = "2024"
 
 [dependencies]
 clap = { workspace = true }
+crossbeam-channel = { workspace = true }
 eframe = { workspace = true }
 egui = { workspace = true }
 rds-core = { workspace = true }
 rds-gui = { workspace = true }
+rds-scanner = { workspace = true }
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
 directories = { workspace = true }

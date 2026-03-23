@@ -33,6 +33,26 @@ run:
 check:
     cargo check --workspace
 
+# Run benchmarks
+bench:
+    cargo bench -p rds-core
+    cargo bench -p rds-gui --features bench-internals
+
+# Open benchmark report in browser
+bench-report:
+    #!/usr/bin/env bash
+    if command -v xdg-open &> /dev/null; then
+        xdg-open target/criterion/report/index.html
+    elif command -v open &> /dev/null; then
+        open target/criterion/report/index.html
+    else
+        echo "Open target/criterion/report/index.html in your browser"
+    fi
+
+# Compare scan performance against dust and dua via hyperfine
+bench-compare dir="/usr":
+    ./scripts/benchmark-comparison.sh {{dir}}
+
 # Remove build artifacts
 clean:
     cargo clean

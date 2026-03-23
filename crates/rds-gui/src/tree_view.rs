@@ -21,7 +21,7 @@ const TOGGLE_BUTTON_WIDTH: f32 = 18.0;
 
 /// Cached subtree sizes and file counts. Computed in a single
 /// bottom-up pass over the arena — O(n) total, O(1) per lookup.
-pub(crate) struct SubtreeStats {
+pub struct SubtreeStats {
     sizes: Vec<u64>,
     file_counts: Vec<u64>,
 }

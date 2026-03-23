@@ -29,10 +29,6 @@ impl ScanErrorLog {
     pub(crate) fn is_empty(&self) -> bool {
         self.entries.is_empty() && self.overflow_count == 0
     }
-
-    pub(crate) fn entries(&self) -> &[(PathBuf, String)] {
-        &self.entries
-    }
 }
 
 pub(crate) fn show(log: &ScanErrorLog, ui: &mut egui::Ui) {

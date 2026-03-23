@@ -5,8 +5,8 @@
 //! tree (MS6), treemap (MS8), extension statistics (MS7), and duplicate
 //! file detection (MS12).
 //! The scanner runs on a background thread; events are drained via
-//! `try_recv()` each frame (bounded to 100 events to avoid blocking
-//! rendering). (ref: DL-003, DL-006)
+//! `try_recv()` each frame (bounded to `DRAIN_BATCH_SIZE` events to avoid
+//! blocking rendering). (ref: DL-003, DL-006)
 
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -30,6 +30,11 @@ mod notifications;
 mod settings;
 mod tree_view;
 mod treemap;
+
+#[cfg(feature = "bench-internals")]
+pub use tree_view::SubtreeStats;
+#[cfg(feature = "bench-internals")]
+pub use treemap::{MAX_DISPLAY_RECTS, TreemapLayout, TreemapRect};
 
 /// Scan lifecycle phases. (ref: DL-004)
 enum ScanPhase {
@@ -84,6 +89,8 @@ pub struct RustDirStatApp {
     path_input: String,
     /// Validation error shown in toolbar when user enters an invalid path.
     path_error: Option<String>,
+    /// Pre-allocation capacity hint for DirTree arena, derived from ScanConfig.
+    tree_capacity_hint: usize,
     /// Accumulated scan errors with path and message detail, capped at 1000.
     scan_error_log: error_log::ScanErrorLog,
     /// When the current scan began, for elapsed time and rate calculation.
@@ -147,6 +154,8 @@ pub struct RustDirStatApp {
     follow_symlinks: bool,
     /// Whether to show the max-nodes limit dialog.
     max_nodes_dialog: bool,
+    /// Cached message for the max-nodes dialog, extracted once in drain_events.
+    max_nodes_message: Option<String>,
     /// Toast notification overlay.
     notifications: notifications::Notifications,
     /// Optional callback invoked to persist config changes to disk.
@@ -171,6 +180,9 @@ impl RustDirStatApp {
     /// during scan. Caps treemap re-layout at 2x/second. (ref: DL-002)
     const LIVE_RECOMPUTE_INTERVAL: Duration = Duration::from_millis(500);
 
+    /// Maximum number of ScanEvent values drained from the channel per frame.
+    const DRAIN_BATCH_SIZE: usize = 5000;
+
     /// Creates a new app. If `initial_path` is `Some`, scanning starts
     /// automatically on the first frame. Config fields are populated from
     /// the provided `AppConfig`.
@@ -187,6 +199,7 @@ impl RustDirStatApp {
             initial_path,
             path_input: String::new(),
             path_error: None,
+            tree_capacity_hint: 100_000,
             scan_error_log: error_log::ScanErrorLog::default(),
             scan_start: None,
             last_live_recompute: None,
@@ -215,6 +228,7 @@ impl RustDirStatApp {
             max_recent_paths: config.max_recent_paths,
             follow_symlinks: config.follow_symlinks,
             max_nodes_dialog: false,
+            max_nodes_message: None,
             notifications: notifications::Notifications::default(),
             config_save_fn: None,
         }
@@ -274,6 +288,7 @@ impl RustDirStatApp {
         self.path_error = None;
         self.export_dialog.last_result = None;
         self.max_nodes_dialog = false;
+        self.max_nodes_message = None;
         self.phase = ScanPhase::Scanning;
         self.scan_path = Some(path.clone());
         self.track_recent_path(path.clone());
@@ -288,6 +303,7 @@ impl RustDirStatApp {
             follow_symlinks: self.follow_symlinks,
             ..ScanConfig::default()
         };
+        self.tree_capacity_hint = config.max_nodes.unwrap_or(100_000).min(100_000);
 
         let handle = rds_scanner::Scanner::scan(config, tx, cancel.clone());
 
@@ -326,7 +342,7 @@ impl RustDirStatApp {
         self.treemap_layout = None;
     }
 
-    /// Drains up to 100 ScanEvent values from the channel per frame.
+    /// Drains up to `DRAIN_BATCH_SIZE` ScanEvent values from the channel per frame.
     /// Inserts nodes into the DirTree arena, updates progress counters,
     /// and transitions to Complete on ScanComplete or channel disconnect.
     ///
@@ -339,13 +355,16 @@ impl RustDirStatApp {
             None => return,
         };
 
-        for _ in 0..100 {
+        for _ in 0..Self::DRAIN_BATCH_SIZE {
             match rx.try_recv() {
                 Ok(ScanEvent::NodeDiscovered { node, parent_index }) => {
                     match parent_index {
                         None => {
                             // First event: create the tree with root node.
-                            self.tree = Some(DirTree::from_root(node));
+                            self.tree = Some(DirTree::from_root_with_capacity(
+                                node,
+                                self.tree_capacity_hint,
+                            ));
                         }
                         Some(pidx) => {
                             if let Some(ref mut t) = self.tree {
@@ -367,10 +386,11 @@ impl RustDirStatApp {
                 }
                 Ok(ScanEvent::ScanError { path, error }) => {
                     let is_max_nodes = error.contains("max_nodes limit");
-                    self.scan_error_log.push(path, error);
                     if is_max_nodes {
+                        self.max_nodes_message = Some(error.clone());
                         self.max_nodes_dialog = true;
                     }
+                    self.scan_error_log.push(path, error);
                 }
                 Ok(ScanEvent::DuplicateFound { node_indices, .. }) => {
                     let size = node_indices
@@ -584,20 +604,15 @@ impl eframe::App for RustDirStatApp {
         // --- Max-nodes limit dialog ---
         if self.max_nodes_dialog {
             let limit_msg = self
-                .scan_error_log
-                .entries()
-                .iter()
-                .find(|(_, e)| e.contains("max_nodes limit"))
-                .map(|(_, e)| e.clone())
-                .unwrap_or_else(|| {
-                    "The scan was stopped because the node limit was reached.".to_string()
-                });
+                .max_nodes_message
+                .as_deref()
+                .unwrap_or("The scan was stopped because the node limit was reached.");
             egui::Window::new("Scan Limit Reached")
                 .collapsible(false)
                 .resizable(false)
                 .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
                 .show(ctx, |ui| {
-                    ui.label(&limit_msg);
+                    ui.label(limit_msg);
                     ui.label("Partial results are still available below.");
                     ui.label("For more detailed analysis, try scanning a subdirectory instead.");
                     ui.separator();
