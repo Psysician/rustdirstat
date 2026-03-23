@@ -5,7 +5,7 @@ rustdirstat/
   Cargo.toml                  # Workspace root; all dep versions in [workspace.dependencies]
   Cargo.lock                  # Committed (binary crate — reproducible builds)
   src/
-    main.rs                   # CLI parsing (clap), tracing init, config load/save (TOML via directories), eframe window launch
+    main.rs                   # CLI parsing (clap), tracing init with RUST_LOG env filter, config load/save (TOML via directories), eframe window launch
   crates/
     rds-core/                 # Shared data types — ZERO deps beyond serde
       Cargo.toml
@@ -23,18 +23,20 @@ rustdirstat/
       README.md               # Ordering invariant, abort design, skip_hidden parity
       src/
         lib.rs                # Module declarations and re-exports
-        scanner.rs            # Scanner::scan() — jwalk traversal, cancel flag, max_nodes, exclude pattern filtering via glob::Pattern, event streaming
-        duplicate.rs          # DuplicateDetector — 3-phase pipeline (size grouping, partial hash, full SHA-256)
+        scanner.rs            # Scanner::scan() — jwalk traversal, cancel flag, max_nodes, exclude pattern filtering via glob::Pattern, event streaming, structured tracing spans (scan/walk)
+        duplicate.rs          # DuplicateDetector — 3-phase pipeline (size grouping, partial hash, full SHA-256), tracing span
       tests/
         scan_integration.rs   # Integration tests with temp directory fixtures
         exclude_integration.rs # Exclude pattern filtering integration tests
         duplicate_integration.rs # Duplicate detection integration tests
-    rds-gui/                  # egui/eframe GUI: dir picker, tree view, ext stats, treemap, duplicates, actions, export, settings, config persistence
-      Cargo.toml              # Deps: eframe, egui, streemap, crossbeam-channel, rds-core, rds-scanner, rfd, trash, open, serde, serde_json, csv
+    rds-gui/                  # egui/eframe GUI: dir picker, tree view, ext stats, treemap, duplicates, actions, export, settings, config persistence, error handling
+      Cargo.toml              # Deps: eframe, egui, egui-notify, streemap, crossbeam-channel, rds-core, rds-scanner, rfd, trash, open, serde, serde_json, csv
       CLAUDE.md
       src/
-        lib.rs                # RustDirStatApp: ScanPhase state machine, dir picker, scanner integration, 3-panel layout, config persistence (collect_config/save_config/on_exit), recent paths tracking, PendingDelete, confirm_delete, CommandEditorState, ExportDialogState, SettingsDialogState
-        tree_view.rs           # SubtreeStats cache (filters deleted), TreeViewState, sorted tree rendering with context menu
+        lib.rs                # RustDirStatApp: ScanPhase state machine, dir picker, scanner integration, 3-panel layout, config persistence (collect_config/save_config/on_exit), recent paths tracking, PendingDelete, confirm_delete, CommandEditorState, ExportDialogState, SettingsDialogState, toast notifications, scan error log panel, max-nodes abort dialog
+        notifications.rs       # Notifications wrapper around egui_notify::Toasts — info/warning/error toasts with auto-dismiss
+        error_log.rs           # ScanErrorLog (capped Vec of path+error pairs, overflow counter), error log panel rendering
+        tree_view.rs           # SubtreeStats cache (filters deleted), TreeViewState, sorted tree rendering with context menu, empty dir "(empty)" hint
         ext_stats.rs           # hsl_to_color32, extension stats panel with stacked bar + Grid table
         treemap.rs             # CushionCoeffs, TreemapLayout, recursive squarify, cushion mesh render, right-click context menu
         duplicates.rs          # Duplicates bottom panel with collapsible groups, wasted space, context menu
@@ -88,7 +90,15 @@ rustdirstat/
 - Bounded `crossbeam-channel` carries `ScanEvent` variants from scanner thread to GUI
 - GUI drains with `try_recv()` per frame (never blocks)
 - `NodeDiscovered` carries full `FileNode` + `parent_index` (GUI-side arena index)
+- `ScanError` carries path + error string — GUI accumulates in `ScanErrorLog` (capped at 1000 entries)
 - Scanner thread runs duplicate detection before sending `ScanComplete`
+
+### Error Handling & User Feedback (crates/rds-gui/src/)
+- Toast notifications (`egui-notify`) for transient action feedback — errors from file manager, custom commands, export
+- Scan error log panel shows accumulated error details (path + message) after scan completes
+- Max-nodes abort triggers a dedicated dialog with suggestion to scan a subdirectory
+- Structured tracing spans in scanner (`scan`, `walk`, `duplicate_detection`) with `RUST_LOG` env filter support
+- DirTree `assert!()` guards are intentional invariants for scanner logic bugs — documented, not removed
 
 ### Configuration Persistence (src/main.rs + rds-core/src/config.rs)
 - `AppConfig` defined in rds-core (serde-deserializable, `#[serde(default)]` for forward compatibility)
@@ -123,5 +133,6 @@ rustdirstat/
 | 14 | Open in File Manager | Done |
 | 15 | Custom Commands | Done |
 | 16 | CSV/JSON Export | Done |
-| 17 | Configuration & Persistence | In Dev |
-| 18-21 | See docs/milestones.md | Pending |
+| 17 | Configuration & Persistence | Done |
+| 18 | Error Handling & Edge Cases | In Dev |
+| 19-21 | See docs/milestones.md | Pending |

@@ -8,7 +8,7 @@ use crossbeam_channel::Sender;
 use rayon::prelude::*;
 use rds_core::scan::ScanEvent;
 use sha2::{Digest, Sha256};
-use tracing::warn;
+use tracing::{info_span, warn};
 
 use crate::scanner::FileEntry;
 
@@ -18,6 +18,9 @@ pub struct DuplicateDetector;
 
 impl DuplicateDetector {
     pub fn find_duplicates(files: &[FileEntry], tx: &Sender<ScanEvent>, cancel: &Arc<AtomicBool>) {
+        let pipeline_span = info_span!("duplicate_pipeline");
+        let _pipeline_guard = pipeline_span.enter();
+
         if cancel.load(Ordering::Relaxed) {
             return;
         }

@@ -23,10 +23,11 @@ open = "5.3.3"
 directories = "6.0.0"
 toml = "1.0.7"
 tracing = "0.1.44"
-tracing-subscriber = "0.3.23"
+tracing-subscriber = { version = "0.3.23", features = ["env-filter"] }
 rds-core = { path = "crates/rds-core" }
 rds-scanner = { path = "crates/rds-scanner" }
 rds-gui = { path = "crates/rds-gui" }
+egui-notify = "0.21.0"
 glob = "0.3"
 walkdir = "2.5.0"
 tempfile = "3.27.0"

@@ -75,7 +75,12 @@ fn save_config(config: &AppConfig, path: &Path) {
 fn main() -> eframe::Result {
     let cli = Cli::parse();
 
-    tracing_subscriber::fmt::init();
+    use tracing_subscriber::EnvFilter;
+    tracing_subscriber::fmt()
+        .with_env_filter(
+            EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("warn")),
+        )
+        .init();
 
     let (config, config_path) = load_config();
 

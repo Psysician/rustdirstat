@@ -175,6 +175,7 @@ pub(crate) fn show(
     pending_delete: &mut Option<PendingDelete>,
     custom_commands: &[CustomCommand],
     sort_order: SortOrder,
+    notifications: &mut crate::notifications::Notifications,
     ui: &mut egui::Ui,
 ) {
     // Detect external selection change (e.g., treemap click).
@@ -198,6 +199,7 @@ pub(crate) fn show(
             pending_delete,
             custom_commands,
             sort_order,
+            notifications,
             ui,
             0,
         );
@@ -218,6 +220,7 @@ fn render_node(
     pending_delete: &mut Option<PendingDelete>,
     custom_commands: &[CustomCommand],
     sort_order: SortOrder,
+    notifications: &mut crate::notifications::Notifications,
     ui: &mut egui::Ui,
     depth: usize,
 ) {
@@ -249,11 +252,21 @@ fn render_node(
 
         // Build label: name + size + file count (dirs only).
         let size = stats.size(index);
+        let is_empty_dir = is_dir
+            && tree
+                .children(index)
+                .iter()
+                .all(|&c| tree.get(c).is_none_or(|n| n.deleted));
+        let display_name = if is_empty_dir {
+            format!("{} (empty)", node.name)
+        } else {
+            node.name.clone()
+        };
         let label_text = if is_dir {
             let count = stats.file_count(index);
             format!(
                 "{}  {}  ({} files)",
-                node.name,
+                display_name,
                 super::format_bytes(size),
                 count,
             )
@@ -261,7 +274,12 @@ fn render_node(
             format!("{}  {}", node.name, super::format_bytes(size))
         };
 
-        let response = ui.selectable_label(is_selected, &label_text);
+        let rich_label = if is_empty_dir {
+            egui::RichText::new(&label_text).color(egui::Color32::GRAY)
+        } else {
+            egui::RichText::new(&label_text)
+        };
+        let response = ui.selectable_label(is_selected, rich_label);
         if response.clicked() {
             *selected = Some(index);
             // Update sync tracker immediately so show() doesn't treat this as
@@ -280,10 +298,18 @@ fn render_node(
         if scan_complete {
             response.interact(egui::Sense::click()).context_menu(|ui| {
                 if ui.button("Open in File Manager").clicked() {
-                    let _ = crate::actions::open_in_file_manager(tree, index);
+                    if let Err(e) = crate::actions::open_in_file_manager(tree, index) {
+                        notifications.error(format!("Failed to open: {e}"));
+                    }
                     ui.close();
                 }
-                crate::actions::show_custom_commands_menu(ui, tree, index, custom_commands);
+                crate::actions::show_custom_commands_menu(
+                    ui,
+                    tree,
+                    index,
+                    custom_commands,
+                    notifications,
+                );
                 if index != tree.root() {
                     ui.separator();
                     if ui.button("Delete").clicked() {
@@ -316,6 +342,7 @@ fn render_node(
                 pending_delete,
                 custom_commands,
                 sort_order,
+                notifications,
                 ui,
                 depth + 1,
             );

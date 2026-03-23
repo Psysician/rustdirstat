@@ -368,6 +368,7 @@ pub(crate) fn show(
     scan_complete: bool,
     pending_delete: &mut Option<PendingDelete>,
     custom_commands: &[CustomCommand],
+    notifications: &mut crate::notifications::Notifications,
     ui: &mut egui::Ui,
 ) {
     let (response, painter) = ui.allocate_painter(layout.last_size, egui::Sense::click());
@@ -479,10 +480,18 @@ pub(crate) fn show(
         response.context_menu(|ui| {
             if let Some(sel_idx) = *selected {
                 if ui.button("Open in File Manager").clicked() {
-                    let _ = crate::actions::open_in_file_manager(tree, sel_idx);
+                    if let Err(e) = crate::actions::open_in_file_manager(tree, sel_idx) {
+                        notifications.error(format!("Failed to open: {e}"));
+                    }
                     ui.close();
                 }
-                crate::actions::show_custom_commands_menu(ui, tree, sel_idx, custom_commands);
+                crate::actions::show_custom_commands_menu(
+                    ui,
+                    tree,
+                    sel_idx,
+                    custom_commands,
+                    notifications,
+                );
                 if sel_idx != tree.root() {
                     ui.separator();
                     if ui.button("Delete").clicked() {

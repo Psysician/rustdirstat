@@ -85,6 +85,9 @@ impl DirTree {
     /// (zero size) rather than remove from Vec; removing any node invalidates all
     /// existing indices across all crates.
     pub fn insert(&mut self, parent_index: usize, mut node: FileNode) -> usize {
+        // Invariant: parent_index must refer to a valid arena node. Indices originate
+        // from the scanner via crossbeam channel; a violation is a scanner bug, not a
+        // user error. Intentional panic — do not replace with Result.
         assert!(
             parent_index < self.nodes.len(),
             "parent_index out of bounds"
@@ -101,6 +104,9 @@ impl DirTree {
     /// Uses an iterative stack traversal to avoid recursion limits on deep trees.
     /// Panics if `index` is out of bounds.
     pub fn subtree_size(&self, index: usize) -> u64 {
+        // Invariant: index must be a valid arena position. All call sites pass indices
+        // obtained from prior insert() calls; an out-of-bounds value is a logic bug in
+        // the caller. Intentional panic — do not replace with Result.
         assert!(index < self.nodes.len(), "index out of bounds");
         let mut total: u64 = 0;
         let mut stack = vec![index];
@@ -120,6 +126,8 @@ impl DirTree {
     /// `None`), reverses the collected names, and joins them into a `PathBuf`.
     /// Panics if `index` is out of bounds.
     pub fn path(&self, index: usize) -> PathBuf {
+        // Invariant: index must be a valid arena position. Called with indices from
+        // insert() or channel events; a violation is a logic bug. Do not replace with Result.
         assert!(index < self.nodes.len(), "index out of bounds");
         let mut components = Vec::new();
         let mut current = index;
@@ -147,6 +155,8 @@ impl DirTree {
     }
 
     pub fn children(&self, index: usize) -> &[usize] {
+        // Invariant: index must be a valid arena position. GUI panels pass indices
+        // received from the scanner; a violation is a protocol bug. Do not replace with Result.
         assert!(index < self.nodes.len(), "index out of bounds");
         &self.nodes[index].children
     }
@@ -174,6 +184,8 @@ impl DirTree {
     /// Uses an iterative stack traversal matching the pattern in `subtree_size`.
     /// Panics if `index` is out of bounds.
     pub fn tombstone(&mut self, index: usize) {
+        // Invariant: index must be a valid arena position. Called by delete actions
+        // on user-selected nodes; a violation is a logic bug. Do not replace with Result.
         assert!(index < self.nodes.len(), "index out of bounds");
 
         // Collect all descendant indices via stack-based DFS.
