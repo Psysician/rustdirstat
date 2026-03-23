@@ -128,10 +128,11 @@ fn open_file_revealing(path: &std::path::Path) -> Result<(), String> {
 /// Encodes all bytes except unreserved characters (RFC 3986 Section 2.3) and `/`.
 #[cfg(not(any(target_os = "windows", target_os = "macos")))]
 fn path_to_file_uri(path: &std::path::Path) -> String {
-    let path_str = path.to_string_lossy();
-    let mut uri = String::with_capacity(7 + path_str.len() * 3);
+    use std::os::unix::ffi::OsStrExt;
+    let bytes = path.as_os_str().as_bytes();
+    let mut uri = String::with_capacity(7 + bytes.len() * 3);
     uri.push_str("file://");
-    for byte in path_str.as_bytes() {
+    for byte in bytes {
         match byte {
             b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'.' | b'_' | b'~' | b'/' => {
                 uri.push(*byte as char);
