@@ -9,7 +9,7 @@ use crossbeam_channel::Sender;
 use glob::Pattern;
 use jwalk::WalkDir;
 use rds_core::scan::{ScanConfig, ScanEvent, ScanStats};
-use rds_core::tree::FileNode;
+use rds_core::tree::{FileNode, NO_PARENT};
 use tracing::{debug, info_span, warn};
 
 use crate::duplicate::DuplicateDetector;
@@ -47,24 +47,24 @@ fn send_root_node(
         }
     };
 
-    let root_modified = epoch_seconds(&root_metadata);
+    let root_modified = epoch_seconds(&root_metadata).unwrap_or(0);
     let root_name = config.root.to_string_lossy().into_owned();
 
     let root_node = FileNode {
-        name: root_name,
+        name: root_name.into(),
         size: 0,
-        is_dir: true,
         children: Vec::new(),
-        parent: None,
-        extension: None,
         modified: root_modified,
-        deleted: false,
+        parent: NO_PARENT,
+        extension: 0,
+        flags: 1, // is_dir
     };
 
     if tx
         .send(ScanEvent::NodeDiscovered {
             node: root_node,
             parent_index: None,
+            extension_name: None,
         })
         .is_err()
     {
@@ -75,14 +75,16 @@ fn send_root_node(
     Ok(())
 }
 
-fn entry_to_node(entry: &jwalk::DirEntry<((), ())>) -> Result<FileNode, String> {
+fn entry_to_node(
+    entry: &jwalk::DirEntry<((), ())>,
+) -> Result<(FileNode, Option<Box<str>>), String> {
     let is_dir = entry.file_type().is_dir();
     let metadata = entry
         .metadata()
         .map_err(|e| format!("{}: {e}", entry.path().display()))?;
 
     let size = if is_dir { 0 } else { metadata.len() };
-    let modified = epoch_seconds(&metadata);
+    let modified = epoch_seconds(&metadata).unwrap_or(0);
 
     let ext = if is_dir {
         None
@@ -94,17 +96,22 @@ fn entry_to_node(entry: &jwalk::DirEntry<((), ())>) -> Result<FileNode, String> 
     };
 
     let name = entry.file_name().to_string_lossy().into_owned();
+    let flags = if is_dir { 1u8 } else { 0u8 };
 
-    Ok(FileNode {
-        name,
-        size,
-        is_dir,
-        children: Vec::new(),
-        parent: None,
-        extension: ext,
-        modified,
-        deleted: false,
-    })
+    let extension_name: Option<Box<str>> = ext.map(|e| e.into());
+
+    Ok((
+        FileNode {
+            name: name.into(),
+            size,
+            children: Vec::new(),
+            modified,
+            parent: NO_PARENT,
+            extension: 0, // placeholder; GUI interns this
+            flags,
+        },
+        extension_name,
+    ))
 }
 
 struct WalkAccum {
@@ -180,8 +187,8 @@ fn emit_node(
     acc: &mut WalkAccum,
     mut file_entries: Option<&mut Vec<FileEntry>>,
 ) -> Result<(), ()> {
-    let node = match entry_to_node(entry) {
-        Ok(n) => n,
+    let (node, extension_name) = match entry_to_node(entry) {
+        Ok(result) => result,
         Err(error) => {
             warn!(path = %entry_path.display(), %error, "metadata error");
             let _ = tx.send(ScanEvent::ScanError {
@@ -192,13 +199,14 @@ fn emit_node(
             return Ok(());
         }
     };
-    let is_dir = node.is_dir;
+    let is_dir = node.is_dir();
     let size = node.size;
 
     if tx
         .send(ScanEvent::NodeDiscovered {
             node,
             parent_index: Some(parent_idx),
+            extension_name,
         })
         .is_err()
     {

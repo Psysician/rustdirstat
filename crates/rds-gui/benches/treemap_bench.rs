@@ -1,30 +1,28 @@
 use criterion::{BenchmarkId, Criterion, criterion_group, criterion_main};
-use rds_core::tree::{DirTree, FileNode};
+use rds_core::tree::{DirTree, FileNode, NO_PARENT};
 use rds_gui::{SubtreeStats, TreemapLayout};
 
-fn make_file(name: &str, size: u64, ext: Option<&str>) -> FileNode {
+fn make_file(name: &str, size: u64, _ext: Option<&str>) -> FileNode {
     FileNode {
-        name: name.to_string(),
+        name: name.into(),
         size,
-        is_dir: false,
         children: Vec::new(),
-        parent: None,
-        extension: ext.map(|e| e.to_string()),
-        modified: None,
-        deleted: false,
+        modified: 0,
+        parent: NO_PARENT,
+        extension: 0,
+        flags: 0,
     }
 }
 
 fn make_dir(name: &str) -> FileNode {
     FileNode {
-        name: name.to_string(),
+        name: name.into(),
         size: 0,
-        is_dir: true,
         children: Vec::new(),
-        parent: None,
-        extension: None,
-        modified: None,
-        deleted: false,
+        modified: 0,
+        parent: NO_PARENT,
+        extension: 0,
+        flags: 1,
     }
 }
 
@@ -50,10 +48,10 @@ fn build_tree(node_count: usize) -> DirTree {
         let parent = dir_indices[i % dir_count];
         let ext = extensions[i % extensions.len()];
         let size = ((i as u64 % 10_000) + 1) * 1024;
-        tree.insert(
-            parent,
-            make_file(&format!("file_{i}.{ext}"), size, Some(ext)),
-        );
+        let ext_idx = tree.intern_extension(Some(ext));
+        let mut node = make_file(&format!("file_{i}.{ext}"), size, Some(ext));
+        node.extension = ext_idx;
+        tree.insert(parent, node);
     }
 
     tree

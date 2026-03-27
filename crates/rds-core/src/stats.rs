@@ -44,10 +44,13 @@ pub fn compute_extension_stats(tree: &DirTree) -> Vec<ExtensionStats> {
 
     for i in 0..tree.len() {
         if let Some(node) = tree.get(i)
-            && !node.is_dir
-            && !node.deleted
+            && !node.is_dir()
+            && !node.deleted()
         {
-            let ext = node.extension.clone().unwrap_or_default();
+            let ext: String = tree
+                .extension_str(node.extension)
+                .unwrap_or_default()
+                .to_string();
             let entry = groups.entry(ext).or_insert((0, 0));
             entry.0 += 1;
             entry.1 += node.size;
@@ -82,6 +85,7 @@ pub fn compute_extension_stats(tree: &DirTree) -> Vec<ExtensionStats> {
 mod tests {
     use super::*;
     use crate::tree::FileNode;
+    use crate::tree::NO_PARENT;
 
     #[test]
     fn color_determinism() {
@@ -114,39 +118,39 @@ mod tests {
     fn compute_stats_on_small_tree() {
         let mut tree = DirTree::new("/root");
 
+        let ext_rs = tree.intern_extension(Some("rs"));
+        let ext_txt = tree.intern_extension(Some("txt"));
+
         let file_a = FileNode {
-            name: "a.rs".to_string(),
+            name: "a.rs".into(),
             size: 1000,
-            is_dir: false,
             children: Vec::new(),
-            parent: None,
-            extension: Some("rs".to_string()),
-            modified: None,
-            deleted: false,
+            modified: 0,
+            parent: NO_PARENT,
+            extension: ext_rs,
+            flags: 0,
         };
         tree.insert(0, file_a);
 
         let file_b = FileNode {
-            name: "b.rs".to_string(),
+            name: "b.rs".into(),
             size: 500,
-            is_dir: false,
             children: Vec::new(),
-            parent: None,
-            extension: Some("rs".to_string()),
-            modified: None,
-            deleted: false,
+            modified: 0,
+            parent: NO_PARENT,
+            extension: ext_rs,
+            flags: 0,
         };
         tree.insert(0, file_b);
 
         let file_c = FileNode {
-            name: "c.txt".to_string(),
+            name: "c.txt".into(),
             size: 500,
-            is_dir: false,
             children: Vec::new(),
-            parent: None,
-            extension: Some("txt".to_string()),
-            modified: None,
-            deleted: false,
+            modified: 0,
+            parent: NO_PARENT,
+            extension: ext_txt,
+            flags: 0,
         };
         tree.insert(0, file_c);
 
@@ -166,14 +170,13 @@ mod tests {
     fn no_extension_files_grouped_under_empty_key() {
         let mut tree = DirTree::new("/root");
         let no_ext = FileNode {
-            name: "Makefile".to_string(),
+            name: "Makefile".into(),
             size: 200,
-            is_dir: false,
             children: Vec::new(),
-            parent: None,
-            extension: None,
-            modified: None,
-            deleted: false,
+            modified: 0,
+            parent: NO_PARENT,
+            extension: 0,
+            flags: 0,
         };
         tree.insert(0, no_ext);
         let stats = compute_extension_stats(&tree);
@@ -187,39 +190,39 @@ mod tests {
     fn compute_stats_excludes_deleted_file() {
         let mut tree = DirTree::new("/root");
 
+        let ext_rs = tree.intern_extension(Some("rs"));
+        let ext_txt = tree.intern_extension(Some("txt"));
+
         let file_a = FileNode {
-            name: "a.rs".to_string(),
+            name: "a.rs".into(),
             size: 1000,
-            is_dir: false,
             children: Vec::new(),
-            parent: None,
-            extension: Some("rs".to_string()),
-            modified: None,
-            deleted: false,
+            modified: 0,
+            parent: NO_PARENT,
+            extension: ext_rs,
+            flags: 0,
         };
         let idx_a = tree.insert(0, file_a);
 
         let file_b = FileNode {
-            name: "b.rs".to_string(),
+            name: "b.rs".into(),
             size: 500,
-            is_dir: false,
             children: Vec::new(),
-            parent: None,
-            extension: Some("rs".to_string()),
-            modified: None,
-            deleted: false,
+            modified: 0,
+            parent: NO_PARENT,
+            extension: ext_rs,
+            flags: 0,
         };
         tree.insert(0, file_b);
 
         let file_c = FileNode {
-            name: "c.txt".to_string(),
+            name: "c.txt".into(),
             size: 500,
-            is_dir: false,
             children: Vec::new(),
-            parent: None,
-            extension: Some("txt".to_string()),
-            modified: None,
-            deleted: false,
+            modified: 0,
+            parent: NO_PARENT,
+            extension: ext_txt,
+            flags: 0,
         };
         tree.insert(0, file_c);
 
@@ -244,27 +247,28 @@ mod tests {
     fn compute_stats_deleted_file_removes_extension_group() {
         let mut tree = DirTree::new("/root");
 
+        let ext_rs = tree.intern_extension(Some("rs"));
+        let ext_txt = tree.intern_extension(Some("txt"));
+
         let file_a = FileNode {
-            name: "a.rs".to_string(),
+            name: "a.rs".into(),
             size: 1000,
-            is_dir: false,
             children: Vec::new(),
-            parent: None,
-            extension: Some("rs".to_string()),
-            modified: None,
-            deleted: false,
+            modified: 0,
+            parent: NO_PARENT,
+            extension: ext_rs,
+            flags: 0,
         };
         tree.insert(0, file_a);
 
         let file_c = FileNode {
-            name: "only.txt".to_string(),
+            name: "only.txt".into(),
             size: 500,
-            is_dir: false,
             children: Vec::new(),
-            parent: None,
-            extension: Some("txt".to_string()),
-            modified: None,
-            deleted: false,
+            modified: 0,
+            parent: NO_PARENT,
+            extension: ext_txt,
+            flags: 0,
         };
         let idx_c = tree.insert(0, file_c);
 

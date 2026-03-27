@@ -36,10 +36,10 @@ impl SubtreeStats {
         // Deleted (tombstoned) nodes contribute nothing.
         for i in 0..len {
             if let Some(node) = tree.get(i)
-                && !node.deleted
+                && !node.deleted()
             {
                 sizes[i] = node.size;
-                if !node.is_dir {
+                if !node.is_dir() {
                     file_counts[i] = 1;
                 }
             }
@@ -52,9 +52,10 @@ impl SubtreeStats {
         // Deleted nodes are skipped so their values never propagate upward.
         for i in (1..len).rev() {
             if let Some(node) = tree.get(i)
-                && !node.deleted
-                && let Some(parent) = node.parent
+                && !node.deleted()
+                && node.parent != rds_core::tree::NO_PARENT
             {
+                let parent = node.parent as usize;
                 sizes[parent] += sizes[i];
                 file_counts[parent] += file_counts[i];
             }
@@ -122,8 +123,8 @@ pub(crate) fn sorted_children(
     let mut children: Vec<usize> = tree
         .children(index)
         .iter()
-        .copied()
-        .filter(|&c| tree.get(c).is_some_and(|n| !n.deleted))
+        .map(|&c| c as usize)
+        .filter(|&c| tree.get(c).is_some_and(|n| !n.deleted()))
         .collect();
     match sort_order {
         SortOrder::SizeDesc => children.sort_by(|&a, &b| stats.size(b).cmp(&stats.size(a))),
@@ -155,7 +156,8 @@ pub(crate) fn sorted_children(
 fn expand_ancestors(tree: &DirTree, state: &mut TreeViewState, index: usize) {
     let mut current = index;
     while let Some(node) = tree.get(current) {
-        if let Some(parent) = node.parent {
+        if node.parent != rds_core::tree::NO_PARENT {
+            let parent = node.parent as usize;
             state.expand(parent);
             current = parent;
         } else {
@@ -229,7 +231,7 @@ fn render_node(
         None => return,
     };
 
-    let is_dir = node.is_dir;
+    let is_dir = node.is_dir();
     let has_children = !tree.children(index).is_empty();
     let is_expanded = is_dir && has_children && state.is_expanded(index);
     let is_selected = *selected == Some(index);
@@ -256,11 +258,11 @@ fn render_node(
             && tree
                 .children(index)
                 .iter()
-                .all(|&c| tree.get(c).is_none_or(|n| n.deleted));
+                .all(|&c| tree.get(c as usize).is_none_or(|n| n.deleted()));
         let display_name = if is_empty_dir {
             format!("{} (empty)", node.name)
         } else {
-            node.name.clone()
+            node.name.to_string()
         };
         let label_text = if is_dir {
             let count = stats.file_count(index);
@@ -353,31 +355,29 @@ fn render_node(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use rds_core::tree::FileNode;
+    use rds_core::tree::{FileNode, NO_PARENT};
 
     fn make_file(name: &str, size: u64) -> FileNode {
         FileNode {
-            name: name.to_string(),
+            name: name.into(),
             size,
-            is_dir: false,
             children: Vec::new(),
-            parent: None,
-            extension: None,
-            modified: None,
-            deleted: false,
+            modified: 0,
+            parent: NO_PARENT,
+            extension: 0,
+            flags: 0,
         }
     }
 
     fn make_dir(name: &str) -> FileNode {
         FileNode {
-            name: name.to_string(),
+            name: name.into(),
             size: 0,
-            is_dir: true,
             children: Vec::new(),
-            parent: None,
-            extension: None,
-            modified: None,
-            deleted: false,
+            modified: 0,
+            parent: NO_PARENT,
+            extension: 0,
+            flags: 1,
         }
     }
 
@@ -715,7 +715,7 @@ mod tests {
             "directory with all children tombstoned should show 0 file count"
         );
         // parent_dir itself is not deleted — it just has no live children.
-        assert!(!tree.get(parent_dir).unwrap().deleted);
+        assert!(!tree.get(parent_dir).unwrap().deleted());
         // Root stats also reflect the change.
         assert_eq!(stats_after.size(0), 0);
         assert_eq!(stats_after.file_count(0), 0);

@@ -189,6 +189,19 @@ pub struct TreemapLayout {
     pub last_root: usize,
 }
 
+/// Cached GPU mesh for the treemap, built from layout + extension filter.
+/// Avoids rebuilding millions of cushion-shaded vertices every frame.
+pub struct TreemapMeshCache {
+    /// Pre-built cushion mesh wrapped in Arc for cheap per-frame cloning.
+    pub mesh: std::sync::Arc<egui::Mesh>,
+    /// Flat-fill rects for tiny rectangles.
+    pub flat_rects: Vec<(egui::Rect, egui::Color32)>,
+    /// The extension filter this mesh was built with.
+    pub extension_filter: Option<String>,
+    /// The screen offset this mesh was built with.
+    pub offset: egui::Vec2,
+}
+
 impl TreemapLayout {
     pub fn compute(
         tree: &DirTree,
@@ -245,6 +258,7 @@ fn compute_recursive(
     let mut items: Vec<LayoutItem> = child_indices
         .iter()
         .filter_map(|&idx| {
+            let idx = idx as usize;
             let size = stats.size(idx) as f32;
             if size > 0.0 {
                 Some(LayoutItem {
@@ -313,7 +327,7 @@ fn compute_recursive(
         let mut child_cushion = parent_cushion;
         child_cushion.add_ridge(&item.rect, height);
 
-        if node.is_dir {
+        if node.is_dir() {
             compute_recursive(
                 tree,
                 stats,
@@ -326,7 +340,7 @@ fn compute_recursive(
                 rect_count,
             );
         } else {
-            let ext = node.extension.as_deref().unwrap_or("");
+            let ext = tree.extension_str(node.extension).unwrap_or("");
             let color = ext_stats::hsl_to_color32(&rds_core::stats::color_for_extension(ext));
             result.push(TreemapRect {
                 node_index: item.node_index,
@@ -392,9 +406,12 @@ pub(crate) fn find_drill_target(
     let mut current = file_idx;
     loop {
         let node = tree.get(current)?;
-        let parent = node.parent?;
+        if node.parent == rds_core::tree::NO_PARENT {
+            return None;
+        }
+        let parent = node.parent as usize;
         if parent == current_root {
-            if tree.get(current)?.is_dir {
+            if tree.get(current)?.is_dir() {
                 return Some(current);
             } else {
                 return None;
@@ -412,11 +429,11 @@ pub(crate) fn breadcrumb_chain(tree: &DirTree, treemap_root: usize) -> Vec<(usiz
     let mut chain = Vec::new();
     let mut current = treemap_root;
     while let Some(node) = tree.get(current) {
-        chain.push((current, node.name.clone()));
-        match node.parent {
-            Some(parent) => current = parent,
-            None => break,
+        chain.push((current, node.name.to_string()));
+        if node.parent == rds_core::tree::NO_PARENT {
+            break;
         }
+        current = node.parent as usize;
     }
     chain.reverse();
     chain
@@ -427,26 +444,13 @@ pub(crate) fn breadcrumb_chain(tree: &DirTree, treemap_root: usize) -> Vec<(usiz
 ///
 /// Large rectangles (>= MIN_CUSHION_DIM) get cushion-shaded mesh rendering.
 /// Small rectangles get flat fills. Both use the 0.5px inset for visual
-/// separation. (ref: DL-002, DL-005, DL-006, DL-007, DL-008, DL-009)
-#[allow(clippy::too_many_arguments)]
-pub(crate) fn show(
+/// Builds the cached treemap mesh from a layout + tree + extension filter.
+pub(crate) fn build_mesh_cache(
     layout: &TreemapLayout,
     tree: &DirTree,
-    selected: &mut Option<usize>,
     highlighted_extension: &Option<String>,
-    treemap_root: &mut usize,
-    scan_complete: bool,
-    pending_delete: &mut Option<PendingDelete>,
-    custom_commands: &[CustomCommand],
-    notifications: &mut crate::notifications::Notifications,
-    ui: &mut egui::Ui,
-) {
-    let (response, painter) = ui.allocate_painter(layout.last_size, egui::Sense::click());
-    let offset = response.rect.min.to_vec2();
-
-    // Helper: dim a color to 30% brightness when extension filter is active
-    // and the node doesn't match. Aggregated "other" rects keep their neutral
-    // gray to remain visible as landmarks. (ref: DL-002)
+    offset: egui::Vec2,
+) -> TreemapMeshCache {
     let effective_color = |rect_info: &TreemapRect| -> egui::Color32 {
         if rect_info.node_index == usize::MAX {
             return rect_info.color;
@@ -454,7 +458,7 @@ pub(crate) fn show(
         if let Some(ext) = highlighted_extension {
             let matches = tree
                 .get(rect_info.node_index)
-                .is_some_and(|n| n.extension.as_deref().unwrap_or("") == ext.as_str());
+                .is_some_and(|n| tree.extension_str(n.extension).unwrap_or("") == ext.as_str());
             if matches {
                 rect_info.color
             } else {
@@ -471,8 +475,8 @@ pub(crate) fn show(
         }
     };
 
-    // Build a single shared mesh for all cushion-shaded rects. (ref: DL-006)
-    let mut cushion_mesh = egui::Mesh::default();
+    let mut mesh = egui::Mesh::default();
+    let mut flat_rects = Vec::new();
 
     for rect_info in &layout.rects {
         let color = effective_color(rect_info);
@@ -480,24 +484,66 @@ pub(crate) fn show(
         let h = rect_info.rect.height();
 
         if w >= MIN_CUSHION_DIM && h >= MIN_CUSHION_DIM {
-            // Cushion shading via mesh. (ref: DL-002, DL-005)
             build_cushion_mesh(
-                &mut cushion_mesh,
+                &mut mesh,
                 rect_info.rect.shrink(0.5),
                 offset,
                 &rect_info.cushion,
                 color,
             );
         } else {
-            // Flat fill for tiny rects. (ref: DL-005)
-            let abs_rect = rect_info.rect.translate(offset);
-            painter.rect_filled(abs_rect.shrink(0.5), 0.0, color);
+            flat_rects.push((rect_info.rect.shrink(0.5).translate(offset), color));
         }
     }
 
-    // Add the combined cushion mesh as a single shape. (ref: DL-006)
-    if !cushion_mesh.vertices.is_empty() {
-        painter.add(egui::Shape::Mesh(cushion_mesh.into()));
+    TreemapMeshCache {
+        mesh: std::sync::Arc::new(mesh),
+        flat_rects,
+        extension_filter: highlighted_extension.clone(),
+        offset,
+    }
+}
+
+/// separation. (ref: DL-002, DL-005, DL-006, DL-007, DL-008, DL-009)
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn show(
+    layout: &TreemapLayout,
+    tree: &DirTree,
+    selected: &mut Option<usize>,
+    highlighted_extension: &Option<String>,
+    treemap_root: &mut usize,
+    scan_complete: bool,
+    pending_delete: &mut Option<PendingDelete>,
+    custom_commands: &[CustomCommand],
+    notifications: &mut crate::notifications::Notifications,
+    mesh_cache: &mut Option<TreemapMeshCache>,
+    ui: &mut egui::Ui,
+) {
+    let (response, painter) = ui.allocate_painter(layout.last_size, egui::Sense::click());
+    let offset = response.rect.min.to_vec2();
+
+    // Rebuild mesh cache if stale (extension filter or offset changed).
+    let needs_rebuild = mesh_cache.as_ref().is_none_or(|c| {
+        c.extension_filter != *highlighted_extension
+            || (c.offset.x - offset.x).abs() > 0.5
+            || (c.offset.y - offset.y).abs() > 0.5
+    });
+    if needs_rebuild {
+        *mesh_cache = Some(build_mesh_cache(
+            layout,
+            tree,
+            highlighted_extension,
+            offset,
+        ));
+    }
+    let cache = mesh_cache.as_ref().unwrap();
+
+    // Paint the cached mesh and flat rects. Arc clone is O(1).
+    if !cache.mesh.vertices.is_empty() {
+        painter.add(egui::Shape::Mesh(cache.mesh.clone()));
+    }
+    for &(rect, color) in &cache.flat_rects {
+        painter.rect_filled(rect, 0.0, color);
     }
 
     // Highlight selected node with a white border. (ref: MS8 DL-008)
@@ -584,7 +630,7 @@ pub(crate) fn show(
                     if ui.button("Delete").clicked() {
                         let node = tree.get(sel_idx).unwrap();
                         let path = tree.path(sel_idx);
-                        let size = if node.is_dir {
+                        let size = if node.is_dir() {
                             tree.subtree_size(sel_idx)
                         } else {
                             node.size
@@ -593,7 +639,7 @@ pub(crate) fn show(
                             node_index: sel_idx,
                             path_display: path.display().to_string(),
                             size_bytes: size,
-                            is_dir: node.is_dir,
+                            is_dir: node.is_dir(),
                         });
                         ui.close();
                     }
@@ -616,31 +662,32 @@ pub(crate) fn show(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use rds_core::tree::FileNode;
+    use rds_core::tree::{FileNode, NO_PARENT};
 
     fn make_file(name: &str, size: u64, ext: Option<&str>) -> FileNode {
+        // Note: extension is 0 (not interned) in test helpers.
+        // Tests that need extension-dependent coloring must use tree.intern_extension().
+        let _ = ext; // extension interning happens via DirTree; we store 0 here
         FileNode {
-            name: name.to_string(),
+            name: name.into(),
             size,
-            is_dir: false,
             children: Vec::new(),
-            parent: None,
-            extension: ext.map(|e| e.to_string()),
-            modified: None,
-            deleted: false,
+            modified: 0,
+            parent: NO_PARENT,
+            extension: 0,
+            flags: 0,
         }
     }
 
     fn make_dir(name: &str) -> FileNode {
         FileNode {
-            name: name.to_string(),
+            name: name.into(),
             size: 0,
-            is_dir: true,
             children: Vec::new(),
-            parent: None,
-            extension: None,
-            modified: None,
-            deleted: false,
+            modified: 0,
+            parent: NO_PARENT,
+            extension: 0,
+            flags: 1,
         }
     }
 
@@ -734,7 +781,10 @@ mod tests {
     #[test]
     fn layout_color_matches_extension() {
         let mut tree = DirTree::new("/root");
-        tree.insert(0, make_file("a.rs", 1000, Some("rs")));
+        let ext_idx = tree.intern_extension(Some("rs"));
+        let mut node = make_file("a.rs", 1000, Some("rs"));
+        node.extension = ext_idx;
+        tree.insert(0, node);
         let stats = SubtreeStats::compute(&tree);
         let layout = TreemapLayout::compute(&tree, &stats, egui::vec2(800.0, 600.0), tree.root());
         let expected = ext_stats::hsl_to_color32(&rds_core::stats::color_for_extension("rs"));

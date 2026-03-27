@@ -25,12 +25,18 @@ fn build_tree_and_duplicates(rx: crossbeam_channel::Receiver<ScanEvent>) -> Scan
 
     for event in rx.iter() {
         match event {
-            ScanEvent::NodeDiscovered { node, parent_index } => match parent_index {
+            ScanEvent::NodeDiscovered {
+                node,
+                parent_index,
+                extension_name,
+            } => match parent_index {
                 None => {
                     tree = Some(DirTree::from_root(node));
                 }
                 Some(pidx) => {
                     if let Some(ref mut t) = tree {
+                        let mut node = node;
+                        node.extension = t.intern_extension(extension_name.as_deref());
                         t.insert(pidx, node);
                     }
                 }

@@ -35,7 +35,7 @@ pub(crate) fn cleanup_duplicate_groups(groups: &mut Vec<DuplicateGroup>, tree: &
     for group in groups.iter_mut() {
         group
             .node_indices
-            .retain(|&idx| tree.get(idx).is_some_and(|n| !n.deleted));
+            .retain(|&idx| tree.get(idx).is_some_and(|n| !n.deleted()));
 
         let file_size = group
             .node_indices
@@ -62,7 +62,7 @@ pub(crate) fn open_in_file_manager(tree: &DirTree, index: usize) -> Result<(), S
         .ok_or_else(|| format!("node at index {index} not found"))?;
     let path = tree.path(index);
 
-    let result = if node.is_dir {
+    let result = if node.is_dir() {
         open::that_detached(&path).map_err(|e| e.to_string())
     } else {
         open_file_revealing(&path)
@@ -264,31 +264,29 @@ pub(crate) fn show_custom_commands_menu(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use rds_core::tree::FileNode;
+    use rds_core::tree::{FileNode, NO_PARENT};
 
     fn make_file_node(name: &str, size: u64) -> FileNode {
         FileNode {
-            name: name.to_string(),
+            name: name.into(),
             size,
-            is_dir: false,
             children: Vec::new(),
-            parent: None,
-            extension: None,
-            modified: None,
-            deleted: false,
+            modified: 0,
+            parent: NO_PARENT,
+            extension: 0,
+            flags: 0,
         }
     }
 
     fn make_dir_node(name: &str) -> FileNode {
         FileNode {
-            name: name.to_string(),
+            name: name.into(),
             size: 0,
-            is_dir: true,
             children: Vec::new(),
-            parent: None,
-            extension: None,
-            modified: None,
-            deleted: false,
+            modified: 0,
+            parent: NO_PARENT,
+            extension: 0,
+            flags: 1,
         }
     }
 

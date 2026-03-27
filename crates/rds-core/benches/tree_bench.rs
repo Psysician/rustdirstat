@@ -1,29 +1,27 @@
 use criterion::{BenchmarkId, Criterion, criterion_group, criterion_main};
-use rds_core::{DirTree, FileNode, compute_extension_stats};
+use rds_core::{DirTree, FileNode, NO_PARENT, compute_extension_stats};
 
 fn make_file_node(name: &str, size: u64, ext: Option<&str>) -> FileNode {
     FileNode {
-        name: name.to_string(),
+        name: name.into(),
         size,
-        is_dir: false,
         children: Vec::new(),
-        parent: None,
-        extension: ext.map(|s| s.to_string()),
-        modified: None,
-        deleted: false,
+        modified: 0,
+        parent: NO_PARENT,
+        extension: 0, // placeholder; benches don't intern extensions
+        flags: 0,
     }
 }
 
 fn make_dir_node(name: &str) -> FileNode {
     FileNode {
-        name: name.to_string(),
+        name: name.into(),
         size: 0,
-        is_dir: true,
         children: Vec::new(),
-        parent: None,
-        extension: None,
-        modified: None,
-        deleted: false,
+        modified: 0,
+        parent: NO_PARENT,
+        extension: 0,
+        flags: 1, // is_dir
     }
 }
 
@@ -66,11 +64,13 @@ fn build_nested_tree(n: usize) -> DirTree {
                 3 => Some("toml"),
                 _ => Some("md"),
             };
-            let node = make_file_node(
+            let ext_idx = tree.intern_extension(ext);
+            let mut node = make_file_node(
                 &format!("file_{f}.{}", ext.unwrap_or("bin")),
                 (f as u64 + 1) * 100,
                 ext,
             );
+            node.extension = ext_idx;
             tree.insert(dir_idx, node);
         }
     }

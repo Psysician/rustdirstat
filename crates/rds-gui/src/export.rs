@@ -96,21 +96,28 @@ pub(crate) fn export_tree(
             Some(n) => n,
             None => continue,
         };
-        if node.deleted {
+        if node.deleted() {
             continue;
         }
         let path = tree.path(index).to_string_lossy().to_string();
         records.push(ExportRecord {
             path,
-            name: node.name.clone(),
+            name: node.name.to_string(),
             size_bytes: node.size,
             size_human: crate::format_bytes(node.size),
-            is_dir: node.is_dir,
-            extension: node.extension.clone().unwrap_or_default(),
-            modified_timestamp: node.modified,
+            is_dir: node.is_dir(),
+            extension: tree
+                .extension_str(node.extension)
+                .unwrap_or_default()
+                .to_string(),
+            modified_timestamp: if node.modified != 0 {
+                Some(node.modified)
+            } else {
+                None
+            },
         });
         for &child_idx in tree.children(index).iter().rev() {
-            stack.push(child_idx);
+            stack.push(child_idx as usize);
         }
     }
 
@@ -144,17 +151,20 @@ pub(crate) fn export_duplicates(
                 Some(n) => n,
                 None => continue,
             };
-            if node.deleted {
+            if node.deleted() {
                 continue;
             }
             let path = tree.path(idx).to_string_lossy().to_string();
             records.push(DuplicateExportRecord {
                 group_number: group_idx + 1,
                 path,
-                name: node.name.clone(),
+                name: node.name.to_string(),
                 size_bytes: node.size,
                 size_human: crate::format_bytes(node.size),
-                extension: node.extension.clone().unwrap_or_default(),
+                extension: tree
+                    .extension_str(node.extension)
+                    .unwrap_or_default()
+                    .to_string(),
                 wasted_bytes_in_group: group.wasted_bytes,
             });
         }
@@ -354,32 +364,37 @@ pub(crate) fn default_filename(format: ExportFormat) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use rds_core::tree::{DirTree, FileNode};
+    use rds_core::tree::{DirTree, FileNode, NO_PARENT};
     use std::io::Read;
 
-    fn make_file_node(name: &str, size: u64, ext: Option<&str>, modified: Option<u64>) -> FileNode {
+    fn make_file_node_in_tree(
+        tree: &mut DirTree,
+        name: &str,
+        size: u64,
+        ext: Option<&str>,
+        modified: u64,
+    ) -> FileNode {
+        let ext_idx = tree.intern_extension(ext);
         FileNode {
-            name: name.to_string(),
+            name: name.into(),
             size,
-            is_dir: false,
             children: Vec::new(),
-            parent: None,
-            extension: ext.map(|s| s.to_string()),
             modified,
-            deleted: false,
+            parent: NO_PARENT,
+            extension: ext_idx,
+            flags: 0,
         }
     }
 
-    fn make_dir_node(name: &str) -> FileNode {
+    fn make_dir_node(_name: &str) -> FileNode {
         FileNode {
-            name: name.to_string(),
+            name: _name.into(),
             size: 0,
-            is_dir: true,
             children: Vec::new(),
-            parent: None,
-            extension: None,
-            modified: None,
-            deleted: false,
+            modified: 0,
+            parent: NO_PARENT,
+            extension: 0,
+            flags: 1,
         }
     }
 
@@ -388,13 +403,16 @@ mod tests {
         let subdir = make_dir_node("subdir");
         let idx_sub = tree.insert(0, subdir);
 
-        let file_a = make_file_node("report.txt", 1024, Some("txt"), Some(1_700_000_000));
+        let file_a =
+            make_file_node_in_tree(&mut tree, "report.txt", 1024, Some("txt"), 1_700_000_000);
         tree.insert(idx_sub, file_a);
 
-        let file_b = make_file_node("image.png", 2048, Some("png"), Some(1_700_001_000));
+        let file_b =
+            make_file_node_in_tree(&mut tree, "image.png", 2048, Some("png"), 1_700_001_000);
         tree.insert(idx_sub, file_b);
 
-        let file_del = make_file_node("deleted.log", 512, Some("log"), Some(1_700_002_000));
+        let file_del =
+            make_file_node_in_tree(&mut tree, "deleted.log", 512, Some("log"), 1_700_002_000);
         let idx_del = tree.insert(idx_sub, file_del);
         tree.tombstone(idx_del);
 
@@ -483,15 +501,15 @@ mod tests {
         let subdir_a = make_dir_node("subdir_a");
         let idx_a = tree.insert(0, subdir_a);
 
-        let file_a1 = make_file_node("a1.txt", 100, Some("txt"), None);
+        let file_a1 = make_file_node_in_tree(&mut tree, "a1.txt", 100, Some("txt"), 0);
         tree.insert(idx_a, file_a1);
-        let file_a2 = make_file_node("a2.rs", 200, Some("rs"), None);
+        let file_a2 = make_file_node_in_tree(&mut tree, "a2.rs", 200, Some("rs"), 0);
         tree.insert(idx_a, file_a2);
 
         let subdir_b = make_dir_node("subdir_b");
         let idx_b = tree.insert(0, subdir_b);
 
-        let file_b1 = make_file_node("b1.txt", 300, Some("txt"), None);
+        let file_b1 = make_file_node_in_tree(&mut tree, "b1.txt", 300, Some("txt"), 0);
         tree.insert(idx_b, file_b1);
 
         let tmp = tempfile::NamedTempFile::new().unwrap();
@@ -528,16 +546,16 @@ mod tests {
         let subdir = make_dir_node("subdir");
         let idx_sub = tree.insert(0, subdir);
 
-        let file_a = make_file_node("photo.jpg", 5000, Some("jpg"), None);
+        let file_a = make_file_node_in_tree(&mut tree, "photo.jpg", 5000, Some("jpg"), 0);
         let idx_a = tree.insert(idx_sub, file_a);
 
-        let file_b = make_file_node("photo_copy.jpg", 5000, Some("jpg"), None);
+        let file_b = make_file_node_in_tree(&mut tree, "photo_copy.jpg", 5000, Some("jpg"), 0);
         let idx_b = tree.insert(idx_sub, file_b);
 
-        let file_c = make_file_node("data.csv", 3000, Some("csv"), None);
+        let file_c = make_file_node_in_tree(&mut tree, "data.csv", 3000, Some("csv"), 0);
         let idx_c = tree.insert(idx_sub, file_c);
 
-        let file_d = make_file_node("data_backup.csv", 3000, Some("csv"), None);
+        let file_d = make_file_node_in_tree(&mut tree, "data_backup.csv", 3000, Some("csv"), 0);
         let idx_d = tree.insert(idx_sub, file_d);
 
         (tree, idx_a, idx_b, idx_c, idx_d)
