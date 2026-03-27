@@ -9,65 +9,67 @@ All struct sizes are for x86-64 (64-bit pointers, 8-byte `usize`).
 
 | Struct | Size (bytes) | Notes |
 | ------ | ------------ | ----- |
-| `FileNode` | 120 | Arena node; largest per-node cost |
-| `DirTree` | 24 | Wrapper around `Vec<FileNode>` (ptr + len + cap) |
-| `ScanEvent` | 136 | Largest variant is `NodeDiscovered` (embeds `FileNode`) |
+| `FileNode` | 40 | Arena node; compact via string arena, u32 indices, extension interning, flags bitfield |
+| `DirTree` | 72 | `Vec<FileNode>` + `Vec<Box<str>>` extension table + `Vec<u8>` name buffer |
+| `ScanEvent` | 56 | Largest variant is `NodeDiscovered` (compact `FileNode` + `Box<str>` name + `Option<Box<str>>` extension) |
 | `ScanStats` | 40 | Five `u64` fields |
 | `ScanConfig` | 72 | Includes `PathBuf` + `Vec<String>` + `Option<usize>` |
 | `TreemapRect` | 96 | Flat display rect with cushion coefficients + aggregation metadata |
 | `CushionCoeffs` | 16 | Four `f32` parabolic ridge coefficients |
 | `TreemapLayout` | 40 | `Vec<TreemapRect>` + `Vec2` + `usize` |
-| `SubtreeStats` | 48 | Two `Vec<u64>` (sizes + file_counts) |
+| `SubtreeStats` | 48 | `Vec<u64>` sizes + `Vec<u32>` file_counts |
 
-### FileNode heap allocation breakdown
+### FileNode field breakdown
 
-Each `FileNode` in the arena also allocates heap memory:
+All per-node data is inline (no per-node heap allocations):
 
-| Field | Stack (bytes) | Heap estimate (bytes) | Notes |
-| ----- | ------------- | --------------------- | ----- |
-| `name: String` | 24 | ~20 avg | Filename only (root stores full path) |
-| `children: Vec<usize>` | 24 | 8 per child | 0 for leaf files; directories grow dynamically |
-| `extension: Option<String>` | 24 | ~4 avg | Short extensions like "rs", "txt", "json" |
-| `size: u64` | 8 | 0 | Inline |
-| `is_dir: bool` | 1 | 0 | Inline |
-| `parent: Option<usize>` | 16 | 0 | Inline |
-| `modified: Option<u64>` | 16 | 0 | Inline |
-| `deleted: bool` | 1 | 0 | Inline |
-| **Total (leaf file)** | **120** | **~24** | ~144 bytes per leaf node |
-| **Total (directory, 10 children)** | **120** | **~104** | ~224 bytes per directory |
+| Field | Size (bytes) | Notes |
+| ----- | ------------ | ----- |
+| `name_offset: u32` | 4 | Index into `DirTree::name_buffer` |
+| `name_len: u16` | 2 | Name length (max 65535, sufficient for any path component) |
+| `size: u64` | 8 | Disk size in bytes |
+| `modified: u64` | 8 | Unix timestamp (0 = unknown) |
+| `parent: u32` | 4 | Parent index (`u32::MAX` = root) |
+| `first_child: u32` | 4 | First child index (`u32::MAX` = leaf) |
+| `next_sibling: u32` | 4 | Next sibling index (`u32::MAX` = end of list) |
+| `extension: u16` | 2 | Index into `DirTree::extensions` table (0 = none) |
+| `flags: u8` | 1 | Bit 0 = is_dir, bit 1 = deleted |
+| padding | 3 | Alignment |
+| **Total** | **40** | Zero per-node heap allocations |
 
-Typical filesystem ratio is ~90% files, ~10% directories, so the weighted average is approximately **152 bytes per node**.
+Names are stored in a contiguous `DirTree::name_buffer` (shared `Vec<u8>`). Extensions are interned in `DirTree::extensions` (shared `Vec<Box<str>>`). Children use an intrusive first-child/next-sibling linked list (zero per-node heap allocations). Typical per-node cost including shared buffer share is approximately **60 bytes per node**.
 
 ## Total Memory Projections
 
 Projections for arena + auxiliary structures at various scales.
 
-### Arena only (`Vec<FileNode>`)
+### Arena + shared buffers
 
-| Node count | Arena stack+heap | Notes |
-| ---------- | ---------------- | ----- |
-| 100,000 | ~15 MB | Small project scan |
-| 1,000,000 | ~152 MB | Medium system scan |
-| 10,000,000 | ~1.52 GB | Full system scan (at `max_nodes` limit) |
+| Node count | FileNode arena | Name buffer (~20 B avg) | Extension table | Total arena |
+| ---------- | -------------- | ----------------------- | --------------- | ----------- |
+| 100,000 | 4 MB | 2 MB | <1 KB | ~6 MB |
+| 1,000,000 | 40 MB | 20 MB | <1 KB | ~60 MB |
+| 10,000,000 | 400 MB | 200 MB | <1 KB | ~600 MB |
 
 ### Auxiliary structures
 
 | Structure | Formula | At 1M nodes |
 | --------- | ------- | ----------- |
-| `path_to_index: HashMap<PathBuf, usize>` | ~(80 + avg_path_len) per entry, ~1.5x capacity overhead | ~160 MB |
-| `SubtreeStats` (two `Vec<u64>`) | 16 bytes per node | 16 MB |
+| `path_to_index: HashMap<PathBuf, u32>` (scan only) | ~(76 + avg_path_len) per entry, ~1.5x capacity overhead | ~155 MB |
+| `SubtreeStats` (`Vec<u64>` sizes + `Vec<u32>` file_counts) | 12 bytes per node | 12 MB |
 | `TreemapLayout` (`Vec<TreemapRect>`) | 96 bytes per rect, capped at 50k | 4.8 MB (capped) |
-| Crossbeam channel buffer | 136 bytes x 4096 slots | 0.5 MB (fixed) |
+| `TreemapMeshCache` (`Arc<egui::Mesh>`) | Vertex/index data for cushion shading | ~5–25 MB (depends on rect count) |
+| Crossbeam channel buffer | ~56 bytes x 4096 slots | 0.2 MB (fixed) |
 
-### Total estimated memory
+### Total estimated memory (post-scan steady state)
 
-| Node count | Arena | path_to_index | SubtreeStats | TreemapLayout | Channel | **Total** |
-| ---------- | ----- | ------------- | ------------ | ------------- | ------- | --------- |
-| 100,000 | 15 MB | 16 MB | 1.6 MB | 4.8 MB | 0.5 MB | ~38 MB |
-| 1,000,000 | 152 MB | 160 MB | 16 MB | 4.8 MB | 0.5 MB | ~333 MB |
-| 10,000,000 | 1.52 GB | 1.6 GB | 160 MB | 4.8 MB | 0.5 MB | ~3.3 GB |
+| Node count | Arena + buffers | SubtreeStats | TreemapLayout | Mesh cache | **Total** |
+| ---------- | --------------- | ------------ | ------------- | ---------- | --------- |
+| 100,000 | 6 MB | 1.2 MB | 4.8 MB | ~5 MB | ~17 MB |
+| 1,000,000 | 60 MB | 12 MB | 4.8 MB | ~15 MB | ~92 MB |
+| 10,000,000 | 600 MB | 120 MB | 4.8 MB | ~25 MB | ~750 MB |
 
-Note: `path_to_index` is dropped after scanning completes. Post-scan memory is significantly lower (arena + SubtreeStats + TreemapLayout).
+Note: `path_to_index` is dropped after scanning completes. Peak scan memory is higher by ~155 MB per 1M nodes.
 
 ## Scan Throughput
 
@@ -89,6 +91,7 @@ cargo run --release -- --scan-only /usr
 - **Aggregation**: When leaf file count exceeds `MAX_DISPLAY_RECTS`, excess items are merged into "other" buckets per directory. Each aggregated rect stores `(file_count, total_bytes)` for tooltip display.
 - **Aggregated rect sentinel**: `node_index = usize::MAX` distinguishes aggregated buckets from real nodes.
 - **Cushion shading**: Rects smaller than 4x4 pixels receive flat fills instead of cushion mesh to avoid per-pixel overhead on tiny rectangles.
+- **Mesh caching**: The cushion mesh (`Arc<egui::Mesh>`) is built once per layout and reused across frames via cheap Arc clone. Rebuilds only on layout change, extension filter change, or panel offset change.
 
 ### Criterion benchmark results (treemap)
 

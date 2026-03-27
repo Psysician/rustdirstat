@@ -84,7 +84,9 @@ Registry of all project documentation, classified by tier for navigation.
 | Structured tracing | `crates/rds-scanner/src/scanner.rs` | `duplicate.rs` (pipeline span), `main.rs` (RUST_LOG env filter) |
 | Treemap aggregation | `crates/rds-gui/src/treemap.rs` | `lib.rs` (drain_events), `docs/benchmarks.md` (memory budget) |
 | Performance benchmarks | `crates/rds-core/benches/tree_bench.rs` | `crates/rds-gui/benches/treemap_bench.rs`, `docs/benchmarks.md`, `scripts/benchmark-comparison.sh` |
-| Memory budget | `docs/benchmarks.md` | `treemap.rs` (MAX_DISPLAY_RECTS), `tree.rs` (FileNode size), `scanner.rs` (pre-allocation) |
+| Memory budget | `docs/benchmarks.md` | `treemap.rs` (MAX_DISPLAY_RECTS), `tree.rs` (FileNode 40 bytes, string arena, extension interning), `scanner.rs` (HashMap u32 values) |
+| Treemap mesh caching | `crates/rds-gui/src/treemap.rs` | `TreemapMeshCache` (Arc<egui::Mesh>), `lib.rs` (treemap_mesh_cache field, invalidation) |
+| WinDirStat layout | `crates/rds-gui/src/lib.rs` | Top: tree (left) + extensions (right), Bottom: treemap panel |
 | Theme support | `crates/rds-gui/src/lib.rs` | `config.rs` (ColorScheme enum), `settings.rs` (color scheme dropdown) |
 | Keyboard shortcuts | `crates/rds-gui/src/lib.rs` | Ctrl+O (browse), Escape (cascade close), F5 (rescan), Backspace (navigate up) |
 | Linux file reveal | `crates/rds-gui/src/actions.rs` | D-Bus FileManager1.ShowItems with open parent fallback |
