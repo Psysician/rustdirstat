@@ -116,7 +116,9 @@ pub(crate) fn export_tree(
                 None
             },
         });
-        for &child_idx in tree.children(index).iter().rev() {
+        // Collect and reverse to process children in insertion order.
+        let child_indices: Vec<u32> = tree.children(index).collect();
+        for &child_idx in child_indices.iter().rev() {
             stack.push(child_idx as usize);
         }
     }
@@ -378,7 +380,8 @@ mod tests {
         FileNode {
             name: name.into(),
             size,
-            children: Vec::new(),
+            first_child: u32::MAX,
+            next_sibling: u32::MAX,
             modified,
             parent: NO_PARENT,
             extension: ext_idx,
@@ -390,7 +393,8 @@ mod tests {
         FileNode {
             name: _name.into(),
             size: 0,
-            children: Vec::new(),
+            first_child: u32::MAX,
+            next_sibling: u32::MAX,
             modified: 0,
             parent: NO_PARENT,
             extension: 0,

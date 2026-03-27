@@ -254,10 +254,9 @@ fn compute_recursive(
         return;
     }
 
-    let child_indices = tree.children(dir_index);
-    let mut items: Vec<LayoutItem> = child_indices
-        .iter()
-        .filter_map(|&idx| {
+    let mut items: Vec<LayoutItem> = tree
+        .children(dir_index)
+        .filter_map(|idx| {
             let idx = idx as usize;
             let size = stats.size(idx) as f32;
             if size > 0.0 {
@@ -671,7 +670,8 @@ mod tests {
         FileNode {
             name: name.into(),
             size,
-            children: Vec::new(),
+            first_child: u32::MAX,
+            next_sibling: u32::MAX,
             modified: 0,
             parent: NO_PARENT,
             extension: 0,
@@ -683,7 +683,8 @@ mod tests {
         FileNode {
             name: name.into(),
             size: 0,
-            children: Vec::new(),
+            first_child: u32::MAX,
+            next_sibling: u32::MAX,
             modified: 0,
             parent: NO_PARENT,
             extension: 0,

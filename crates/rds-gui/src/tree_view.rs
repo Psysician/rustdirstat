@@ -122,8 +122,7 @@ pub(crate) fn sorted_children(
 ) -> Vec<usize> {
     let mut children: Vec<usize> = tree
         .children(index)
-        .iter()
-        .map(|&c| c as usize)
+        .map(|c| c as usize)
         .filter(|&c| tree.get(c).is_some_and(|n| !n.deleted()))
         .collect();
     match sort_order {
@@ -232,7 +231,7 @@ fn render_node(
     };
 
     let is_dir = node.is_dir();
-    let has_children = !tree.children(index).is_empty();
+    let has_children = tree.get(index).is_some_and(|n| n.first_child != u32::MAX);
     let is_expanded = is_dir && has_children && state.is_expanded(index);
     let is_selected = *selected == Some(index);
 
@@ -257,8 +256,7 @@ fn render_node(
         let is_empty_dir = is_dir
             && tree
                 .children(index)
-                .iter()
-                .all(|&c| tree.get(c as usize).is_none_or(|n| n.deleted()));
+                .all(|c| tree.get(c as usize).is_none_or(|n| n.deleted()));
         let display_name = if is_empty_dir {
             format!("{} (empty)", node.name)
         } else {
@@ -361,7 +359,8 @@ mod tests {
         FileNode {
             name: name.into(),
             size,
-            children: Vec::new(),
+            first_child: u32::MAX,
+            next_sibling: u32::MAX,
             modified: 0,
             parent: NO_PARENT,
             extension: 0,
@@ -373,7 +372,8 @@ mod tests {
         FileNode {
             name: name.into(),
             size: 0,
-            children: Vec::new(),
+            first_child: u32::MAX,
+            next_sibling: u32::MAX,
             modified: 0,
             parent: NO_PARENT,
             extension: 0,

@@ -53,7 +53,8 @@ fn send_root_node(
     let root_node = FileNode {
         name: root_name.into(),
         size: 0,
-        children: Vec::new(),
+        first_child: u32::MAX,
+        next_sibling: u32::MAX,
         modified: root_modified,
         parent: NO_PARENT,
         extension: 0,
@@ -104,7 +105,8 @@ fn entry_to_node(
         FileNode {
             name: name.into(),
             size,
-            children: Vec::new(),
+            first_child: u32::MAX,
+            next_sibling: u32::MAX,
             modified,
             parent: NO_PARENT,
             extension: 0, // placeholder; GUI interns this

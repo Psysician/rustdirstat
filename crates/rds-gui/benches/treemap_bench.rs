@@ -6,7 +6,8 @@ fn make_file(name: &str, size: u64, _ext: Option<&str>) -> FileNode {
     FileNode {
         name: name.into(),
         size,
-        children: Vec::new(),
+        first_child: u32::MAX,
+        next_sibling: u32::MAX,
         modified: 0,
         parent: NO_PARENT,
         extension: 0,
@@ -18,7 +19,8 @@ fn make_dir(name: &str) -> FileNode {
     FileNode {
         name: name.into(),
         size: 0,
-        children: Vec::new(),
+        first_child: u32::MAX,
+        next_sibling: u32::MAX,
         modified: 0,
         parent: NO_PARENT,
         extension: 0,

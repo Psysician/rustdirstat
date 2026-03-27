@@ -124,7 +124,8 @@ mod tests {
         let file_a = FileNode {
             name: "a.rs".into(),
             size: 1000,
-            children: Vec::new(),
+            first_child: u32::MAX,
+            next_sibling: u32::MAX,
             modified: 0,
             parent: NO_PARENT,
             extension: ext_rs,
@@ -135,7 +136,8 @@ mod tests {
         let file_b = FileNode {
             name: "b.rs".into(),
             size: 500,
-            children: Vec::new(),
+            first_child: u32::MAX,
+            next_sibling: u32::MAX,
             modified: 0,
             parent: NO_PARENT,
             extension: ext_rs,
@@ -146,7 +148,8 @@ mod tests {
         let file_c = FileNode {
             name: "c.txt".into(),
             size: 500,
-            children: Vec::new(),
+            first_child: u32::MAX,
+            next_sibling: u32::MAX,
             modified: 0,
             parent: NO_PARENT,
             extension: ext_txt,
@@ -172,7 +175,8 @@ mod tests {
         let no_ext = FileNode {
             name: "Makefile".into(),
             size: 200,
-            children: Vec::new(),
+            first_child: u32::MAX,
+            next_sibling: u32::MAX,
             modified: 0,
             parent: NO_PARENT,
             extension: 0,
@@ -196,7 +200,8 @@ mod tests {
         let file_a = FileNode {
             name: "a.rs".into(),
             size: 1000,
-            children: Vec::new(),
+            first_child: u32::MAX,
+            next_sibling: u32::MAX,
             modified: 0,
             parent: NO_PARENT,
             extension: ext_rs,
@@ -207,7 +212,8 @@ mod tests {
         let file_b = FileNode {
             name: "b.rs".into(),
             size: 500,
-            children: Vec::new(),
+            first_child: u32::MAX,
+            next_sibling: u32::MAX,
             modified: 0,
             parent: NO_PARENT,
             extension: ext_rs,
@@ -218,7 +224,8 @@ mod tests {
         let file_c = FileNode {
             name: "c.txt".into(),
             size: 500,
-            children: Vec::new(),
+            first_child: u32::MAX,
+            next_sibling: u32::MAX,
             modified: 0,
             parent: NO_PARENT,
             extension: ext_txt,
@@ -253,7 +260,8 @@ mod tests {
         let file_a = FileNode {
             name: "a.rs".into(),
             size: 1000,
-            children: Vec::new(),
+            first_child: u32::MAX,
+            next_sibling: u32::MAX,
             modified: 0,
             parent: NO_PARENT,
             extension: ext_rs,
@@ -264,7 +272,8 @@ mod tests {
         let file_c = FileNode {
             name: "only.txt".into(),
             size: 500,
-            children: Vec::new(),
+            first_child: u32::MAX,
+            next_sibling: u32::MAX,
             modified: 0,
             parent: NO_PARENT,
             extension: ext_txt,

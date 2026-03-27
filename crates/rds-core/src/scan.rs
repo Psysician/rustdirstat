@@ -91,7 +91,8 @@ mod tests {
         let node = FileNode {
             name: "test.txt".into(),
             size: 1024,
-            children: Vec::new(),
+            first_child: u32::MAX,
+            next_sibling: u32::MAX,
             modified: 0,
             parent: NO_PARENT,
             extension: 0,

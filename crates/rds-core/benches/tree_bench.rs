@@ -5,7 +5,8 @@ fn make_file_node(name: &str, size: u64, ext: Option<&str>) -> FileNode {
     FileNode {
         name: name.into(),
         size,
-        children: Vec::new(),
+        first_child: u32::MAX,
+        next_sibling: u32::MAX,
         modified: 0,
         parent: NO_PARENT,
         extension: 0, // placeholder; benches don't intern extensions
@@ -17,7 +18,8 @@ fn make_dir_node(name: &str) -> FileNode {
     FileNode {
         name: name.into(),
         size: 0,
-        children: Vec::new(),
+        first_child: u32::MAX,
+        next_sibling: u32::MAX,
         modified: 0,
         parent: NO_PARENT,
         extension: 0,
