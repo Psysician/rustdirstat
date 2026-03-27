@@ -1,9 +1,10 @@
 use criterion::{BenchmarkId, Criterion, criterion_group, criterion_main};
 use rds_core::{DirTree, FileNode, NO_PARENT, compute_extension_stats};
 
-fn make_file_node(name: &str, size: u64, ext: Option<&str>) -> FileNode {
+fn make_file_node(size: u64) -> FileNode {
     FileNode {
-        name: name.into(),
+        name_offset: 0,
+        name_len: 0,
         size,
         first_child: u32::MAX,
         next_sibling: u32::MAX,
@@ -14,9 +15,10 @@ fn make_file_node(name: &str, size: u64, ext: Option<&str>) -> FileNode {
     }
 }
 
-fn make_dir_node(name: &str) -> FileNode {
+fn make_dir_node() -> FileNode {
     FileNode {
-        name: name.into(),
+        name_offset: 0,
+        name_len: 0,
         size: 0,
         first_child: u32::MAX,
         next_sibling: u32::MAX,
@@ -39,8 +41,9 @@ fn bench_insert_nodes(c: &mut Criterion) {
             b.iter(|| {
                 let mut tree = DirTree::new("/root");
                 for i in 0..n {
-                    let node = make_file_node(&format!("file_{i}.txt"), 1024, Some("txt"));
-                    tree.insert(0, node);
+                    let name = format!("file_{i}.txt");
+                    let node = make_file_node(1024);
+                    tree.insert(0, node, &name);
                 }
                 tree
             });
@@ -57,7 +60,8 @@ fn build_nested_tree(n: usize) -> DirTree {
     let files_per_dir = n / dirs_count;
 
     for d in 0..dirs_count {
-        let dir_idx = tree.insert(0, make_dir_node(&format!("dir_{d}")));
+        let dir_name = format!("dir_{d}");
+        let dir_idx = tree.insert(0, make_dir_node(), &dir_name);
         for f in 0..files_per_dir {
             let ext = match f % 5 {
                 0 => Some("rs"),
@@ -67,13 +71,10 @@ fn build_nested_tree(n: usize) -> DirTree {
                 _ => Some("md"),
             };
             let ext_idx = tree.intern_extension(ext);
-            let mut node = make_file_node(
-                &format!("file_{f}.{}", ext.unwrap_or("bin")),
-                (f as u64 + 1) * 100,
-                ext,
-            );
+            let name = format!("file_{f}.{}", ext.unwrap_or("bin"));
+            let mut node = make_file_node((f as u64 + 1) * 100);
             node.extension = ext_idx;
-            tree.insert(dir_idx, node);
+            tree.insert(dir_idx, node, &name);
         }
     }
 

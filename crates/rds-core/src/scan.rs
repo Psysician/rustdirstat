@@ -19,6 +19,10 @@ pub enum ScanEvent {
         /// extension table. The scanner sets `node.extension = 0` (placeholder)
         /// and passes the actual extension string here.
         extension_name: Option<Box<str>>,
+        /// Node name passed separately because the scanner does not have
+        /// access to the DirTree's name buffer. The GUI appends this to
+        /// the buffer when inserting the node.
+        node_name: Box<str>,
     },
     Progress {
         files_scanned: u64,
@@ -89,7 +93,8 @@ mod tests {
     #[test]
     fn scan_event_node_discovered_construction() {
         let node = FileNode {
-            name: "test.txt".into(),
+            name_offset: 0,
+            name_len: 0,
             size: 1024,
             first_child: u32::MAX,
             next_sibling: u32::MAX,
@@ -102,14 +107,17 @@ mod tests {
             node: node.clone(),
             parent_index: Some(0),
             extension_name: Some("txt".into()),
+            node_name: "test.txt".into(),
         };
         if let ScanEvent::NodeDiscovered {
             node: n,
             parent_index,
             extension_name,
+            node_name,
         } = event
         {
-            assert_eq!(&*n.name, "test.txt");
+            assert_eq!(&*node_name, "test.txt");
+            assert_eq!(n.size, 1024);
             assert_eq!(parent_index, Some(0));
             assert_eq!(extension_name.as_deref(), Some("txt"));
         } else {

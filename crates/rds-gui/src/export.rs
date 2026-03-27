@@ -102,7 +102,7 @@ pub(crate) fn export_tree(
         let path = tree.path(index).to_string_lossy().to_string();
         records.push(ExportRecord {
             path,
-            name: node.name.to_string(),
+            name: tree.name(index).to_string(),
             size_bytes: node.size,
             size_human: crate::format_bytes(node.size),
             is_dir: node.is_dir(),
@@ -160,7 +160,7 @@ pub(crate) fn export_duplicates(
             records.push(DuplicateExportRecord {
                 group_number: group_idx + 1,
                 path,
-                name: node.name.to_string(),
+                name: tree.name(idx).to_string(),
                 size_bytes: node.size,
                 size_human: crate::format_bytes(node.size),
                 extension: tree
@@ -371,14 +371,14 @@ mod tests {
 
     fn make_file_node_in_tree(
         tree: &mut DirTree,
-        name: &str,
         size: u64,
         ext: Option<&str>,
         modified: u64,
     ) -> FileNode {
         let ext_idx = tree.intern_extension(ext);
         FileNode {
-            name: name.into(),
+            name_offset: 0,
+            name_len: 0,
             size,
             first_child: u32::MAX,
             next_sibling: u32::MAX,
@@ -389,9 +389,10 @@ mod tests {
         }
     }
 
-    fn make_dir_node(_name: &str) -> FileNode {
+    fn make_dir_node() -> FileNode {
         FileNode {
-            name: _name.into(),
+            name_offset: 0,
+            name_len: 0,
             size: 0,
             first_child: u32::MAX,
             next_sibling: u32::MAX,
@@ -404,20 +405,17 @@ mod tests {
 
     fn build_test_tree() -> DirTree {
         let mut tree = DirTree::new("/root");
-        let subdir = make_dir_node("subdir");
-        let idx_sub = tree.insert(0, subdir);
+        let subdir = make_dir_node();
+        let idx_sub = tree.insert(0, subdir, "subdir");
 
-        let file_a =
-            make_file_node_in_tree(&mut tree, "report.txt", 1024, Some("txt"), 1_700_000_000);
-        tree.insert(idx_sub, file_a);
+        let file_a = make_file_node_in_tree(&mut tree, 1024, Some("txt"), 1_700_000_000);
+        tree.insert(idx_sub, file_a, "report.txt");
 
-        let file_b =
-            make_file_node_in_tree(&mut tree, "image.png", 2048, Some("png"), 1_700_001_000);
-        tree.insert(idx_sub, file_b);
+        let file_b = make_file_node_in_tree(&mut tree, 2048, Some("png"), 1_700_001_000);
+        tree.insert(idx_sub, file_b, "image.png");
 
-        let file_del =
-            make_file_node_in_tree(&mut tree, "deleted.log", 512, Some("log"), 1_700_002_000);
-        let idx_del = tree.insert(idx_sub, file_del);
+        let file_del = make_file_node_in_tree(&mut tree, 512, Some("log"), 1_700_002_000);
+        let idx_del = tree.insert(idx_sub, file_del, "deleted.log");
         tree.tombstone(idx_del);
 
         tree
@@ -502,19 +500,19 @@ mod tests {
     #[test]
     fn export_current_view_limits_to_subtree() {
         let mut tree = DirTree::new("/root");
-        let subdir_a = make_dir_node("subdir_a");
-        let idx_a = tree.insert(0, subdir_a);
+        let subdir_a = make_dir_node();
+        let idx_a = tree.insert(0, subdir_a, "subdir_a");
 
-        let file_a1 = make_file_node_in_tree(&mut tree, "a1.txt", 100, Some("txt"), 0);
-        tree.insert(idx_a, file_a1);
-        let file_a2 = make_file_node_in_tree(&mut tree, "a2.rs", 200, Some("rs"), 0);
-        tree.insert(idx_a, file_a2);
+        let file_a1 = make_file_node_in_tree(&mut tree, 100, Some("txt"), 0);
+        tree.insert(idx_a, file_a1, "a1.txt");
+        let file_a2 = make_file_node_in_tree(&mut tree, 200, Some("rs"), 0);
+        tree.insert(idx_a, file_a2, "a2.rs");
 
-        let subdir_b = make_dir_node("subdir_b");
-        let idx_b = tree.insert(0, subdir_b);
+        let subdir_b = make_dir_node();
+        let idx_b = tree.insert(0, subdir_b, "subdir_b");
 
-        let file_b1 = make_file_node_in_tree(&mut tree, "b1.txt", 300, Some("txt"), 0);
-        tree.insert(idx_b, file_b1);
+        let file_b1 = make_file_node_in_tree(&mut tree, 300, Some("txt"), 0);
+        tree.insert(idx_b, file_b1, "b1.txt");
 
         let tmp = tempfile::NamedTempFile::new().unwrap();
         let path = tmp.path().to_path_buf();
@@ -547,20 +545,20 @@ mod tests {
 
     fn build_duplicate_test_tree() -> (DirTree, usize, usize, usize, usize) {
         let mut tree = DirTree::new("/root");
-        let subdir = make_dir_node("subdir");
-        let idx_sub = tree.insert(0, subdir);
+        let subdir = make_dir_node();
+        let idx_sub = tree.insert(0, subdir, "subdir");
 
-        let file_a = make_file_node_in_tree(&mut tree, "photo.jpg", 5000, Some("jpg"), 0);
-        let idx_a = tree.insert(idx_sub, file_a);
+        let file_a = make_file_node_in_tree(&mut tree, 5000, Some("jpg"), 0);
+        let idx_a = tree.insert(idx_sub, file_a, "photo.jpg");
 
-        let file_b = make_file_node_in_tree(&mut tree, "photo_copy.jpg", 5000, Some("jpg"), 0);
-        let idx_b = tree.insert(idx_sub, file_b);
+        let file_b = make_file_node_in_tree(&mut tree, 5000, Some("jpg"), 0);
+        let idx_b = tree.insert(idx_sub, file_b, "photo_copy.jpg");
 
-        let file_c = make_file_node_in_tree(&mut tree, "data.csv", 3000, Some("csv"), 0);
-        let idx_c = tree.insert(idx_sub, file_c);
+        let file_c = make_file_node_in_tree(&mut tree, 3000, Some("csv"), 0);
+        let idx_c = tree.insert(idx_sub, file_c, "data.csv");
 
-        let file_d = make_file_node_in_tree(&mut tree, "data_backup.csv", 3000, Some("csv"), 0);
-        let idx_d = tree.insert(idx_sub, file_d);
+        let file_d = make_file_node_in_tree(&mut tree, 3000, Some("csv"), 0);
+        let idx_d = tree.insert(idx_sub, file_d, "data_backup.csv");
 
         (tree, idx_a, idx_b, idx_c, idx_d)
     }

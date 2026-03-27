@@ -114,6 +114,20 @@ mod tests {
         assert_eq!(c.l, 0.5);
     }
 
+    fn make_file_node(size: u64, extension: u16) -> FileNode {
+        FileNode {
+            name_offset: 0,
+            name_len: 0,
+            size,
+            first_child: u32::MAX,
+            next_sibling: u32::MAX,
+            modified: 0,
+            parent: NO_PARENT,
+            extension,
+            flags: 0,
+        }
+    }
+
     #[test]
     fn compute_stats_on_small_tree() {
         let mut tree = DirTree::new("/root");
@@ -121,41 +135,9 @@ mod tests {
         let ext_rs = tree.intern_extension(Some("rs"));
         let ext_txt = tree.intern_extension(Some("txt"));
 
-        let file_a = FileNode {
-            name: "a.rs".into(),
-            size: 1000,
-            first_child: u32::MAX,
-            next_sibling: u32::MAX,
-            modified: 0,
-            parent: NO_PARENT,
-            extension: ext_rs,
-            flags: 0,
-        };
-        tree.insert(0, file_a);
-
-        let file_b = FileNode {
-            name: "b.rs".into(),
-            size: 500,
-            first_child: u32::MAX,
-            next_sibling: u32::MAX,
-            modified: 0,
-            parent: NO_PARENT,
-            extension: ext_rs,
-            flags: 0,
-        };
-        tree.insert(0, file_b);
-
-        let file_c = FileNode {
-            name: "c.txt".into(),
-            size: 500,
-            first_child: u32::MAX,
-            next_sibling: u32::MAX,
-            modified: 0,
-            parent: NO_PARENT,
-            extension: ext_txt,
-            flags: 0,
-        };
-        tree.insert(0, file_c);
+        tree.insert(0, make_file_node(1000, ext_rs), "a.rs");
+        tree.insert(0, make_file_node(500, ext_rs), "b.rs");
+        tree.insert(0, make_file_node(500, ext_txt), "c.txt");
 
         let stats = compute_extension_stats(&tree);
         assert_eq!(stats.len(), 2);
@@ -172,17 +154,7 @@ mod tests {
     #[test]
     fn no_extension_files_grouped_under_empty_key() {
         let mut tree = DirTree::new("/root");
-        let no_ext = FileNode {
-            name: "Makefile".into(),
-            size: 200,
-            first_child: u32::MAX,
-            next_sibling: u32::MAX,
-            modified: 0,
-            parent: NO_PARENT,
-            extension: 0,
-            flags: 0,
-        };
-        tree.insert(0, no_ext);
+        tree.insert(0, make_file_node(200, 0), "Makefile");
         let stats = compute_extension_stats(&tree);
         assert_eq!(stats.len(), 1);
         assert_eq!(stats[0].extension, "");
@@ -197,41 +169,9 @@ mod tests {
         let ext_rs = tree.intern_extension(Some("rs"));
         let ext_txt = tree.intern_extension(Some("txt"));
 
-        let file_a = FileNode {
-            name: "a.rs".into(),
-            size: 1000,
-            first_child: u32::MAX,
-            next_sibling: u32::MAX,
-            modified: 0,
-            parent: NO_PARENT,
-            extension: ext_rs,
-            flags: 0,
-        };
-        let idx_a = tree.insert(0, file_a);
-
-        let file_b = FileNode {
-            name: "b.rs".into(),
-            size: 500,
-            first_child: u32::MAX,
-            next_sibling: u32::MAX,
-            modified: 0,
-            parent: NO_PARENT,
-            extension: ext_rs,
-            flags: 0,
-        };
-        tree.insert(0, file_b);
-
-        let file_c = FileNode {
-            name: "c.txt".into(),
-            size: 500,
-            first_child: u32::MAX,
-            next_sibling: u32::MAX,
-            modified: 0,
-            parent: NO_PARENT,
-            extension: ext_txt,
-            flags: 0,
-        };
-        tree.insert(0, file_c);
+        let idx_a = tree.insert(0, make_file_node(1000, ext_rs), "a.rs");
+        tree.insert(0, make_file_node(500, ext_rs), "b.rs");
+        tree.insert(0, make_file_node(500, ext_txt), "c.txt");
 
         // Tombstone a.rs (1000 bytes).
         tree.tombstone(idx_a);
@@ -257,29 +197,8 @@ mod tests {
         let ext_rs = tree.intern_extension(Some("rs"));
         let ext_txt = tree.intern_extension(Some("txt"));
 
-        let file_a = FileNode {
-            name: "a.rs".into(),
-            size: 1000,
-            first_child: u32::MAX,
-            next_sibling: u32::MAX,
-            modified: 0,
-            parent: NO_PARENT,
-            extension: ext_rs,
-            flags: 0,
-        };
-        tree.insert(0, file_a);
-
-        let file_c = FileNode {
-            name: "only.txt".into(),
-            size: 500,
-            first_child: u32::MAX,
-            next_sibling: u32::MAX,
-            modified: 0,
-            parent: NO_PARENT,
-            extension: ext_txt,
-            flags: 0,
-        };
-        let idx_c = tree.insert(0, file_c);
+        tree.insert(0, make_file_node(1000, ext_rs), "a.rs");
+        let idx_c = tree.insert(0, make_file_node(500, ext_txt), "only.txt");
 
         // Tombstone the only .txt file.
         tree.tombstone(idx_c);

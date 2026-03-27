@@ -21,15 +21,16 @@ fn build_tree_from_events(
                 node,
                 parent_index,
                 extension_name,
+                node_name,
             } => match parent_index {
                 None => {
-                    tree = Some(DirTree::from_root(node));
+                    tree = Some(DirTree::from_root(node, &node_name));
                 }
                 Some(pidx) => {
                     if let Some(ref mut t) = tree {
                         let mut node = node;
                         node.extension = t.intern_extension(extension_name.as_deref());
-                        t.insert(pidx, node);
+                        t.insert(pidx, node, &node_name);
                     }
                 }
             },
@@ -219,7 +220,7 @@ fn scan_file_extensions() {
         let node = tree.get(i).unwrap();
         if !node.is_dir() {
             extensions.push((
-                node.name.to_string(),
+                tree.name(i).to_string(),
                 tree.extension_str(node.extension).map(|e| e.to_string()),
             ));
         }

@@ -367,12 +367,14 @@ impl RustDirStatApp {
                     node,
                     parent_index,
                     extension_name,
+                    node_name,
                 }) => {
                     match parent_index {
                         None => {
                             // First event: create the tree with root node.
                             self.tree = Some(DirTree::from_root_with_capacity(
                                 node,
+                                &node_name,
                                 self.tree_capacity_hint,
                             ));
                         }
@@ -380,7 +382,7 @@ impl RustDirStatApp {
                             if let Some(ref mut t) = self.tree {
                                 let mut node = node;
                                 node.extension = t.intern_extension(extension_name.as_deref());
-                                t.insert(pidx, node);
+                                t.insert(pidx, node, &node_name);
                             }
                         }
                     }

@@ -428,7 +428,7 @@ pub(crate) fn breadcrumb_chain(tree: &DirTree, treemap_root: usize) -> Vec<(usiz
     let mut chain = Vec::new();
     let mut current = treemap_root;
     while let Some(node) = tree.get(current) {
-        chain.push((current, node.name.to_string()));
+        chain.push((current, tree.name(current).to_string()));
         if node.parent == rds_core::tree::NO_PARENT {
             break;
         }
@@ -663,12 +663,10 @@ mod tests {
     use super::*;
     use rds_core::tree::{FileNode, NO_PARENT};
 
-    fn make_file(name: &str, size: u64, ext: Option<&str>) -> FileNode {
-        // Note: extension is 0 (not interned) in test helpers.
-        // Tests that need extension-dependent coloring must use tree.intern_extension().
-        let _ = ext; // extension interning happens via DirTree; we store 0 here
+    fn make_file(size: u64) -> FileNode {
         FileNode {
-            name: name.into(),
+            name_offset: 0,
+            name_len: 0,
             size,
             first_child: u32::MAX,
             next_sibling: u32::MAX,
@@ -679,9 +677,10 @@ mod tests {
         }
     }
 
-    fn make_dir(name: &str) -> FileNode {
+    fn make_dir() -> FileNode {
         FileNode {
-            name: name.into(),
+            name_offset: 0,
+            name_len: 0,
             size: 0,
             first_child: u32::MAX,
             next_sibling: u32::MAX,
@@ -695,7 +694,7 @@ mod tests {
     #[test]
     fn layout_single_file() {
         let mut tree = DirTree::new("/root");
-        tree.insert(0, make_file("a.rs", 1000, Some("rs")));
+        tree.insert(0, make_file(1000), "a.rs");
         let stats = SubtreeStats::compute(&tree);
         let layout = TreemapLayout::compute(&tree, &stats, egui::vec2(800.0, 600.0), tree.root());
         assert_eq!(layout.rects.len(), 1);
@@ -708,9 +707,9 @@ mod tests {
     #[test]
     fn layout_three_files_within_bounds() {
         let mut tree = DirTree::new("/root");
-        tree.insert(0, make_file("a.rs", 600, Some("rs")));
-        tree.insert(0, make_file("b.py", 300, Some("py")));
-        tree.insert(0, make_file("c.js", 100, Some("js")));
+        tree.insert(0, make_file(600), "a.rs");
+        tree.insert(0, make_file(300), "b.py");
+        tree.insert(0, make_file(100), "c.js");
         let stats = SubtreeStats::compute(&tree);
         let layout = TreemapLayout::compute(&tree, &stats, egui::vec2(800.0, 600.0), tree.root());
         assert_eq!(layout.rects.len(), 3);
@@ -725,8 +724,8 @@ mod tests {
     #[test]
     fn layout_largest_gets_largest_area() {
         let mut tree = DirTree::new("/root");
-        tree.insert(0, make_file("big.rs", 900, Some("rs")));
-        tree.insert(0, make_file("small.py", 100, Some("py")));
+        tree.insert(0, make_file(900), "big.rs");
+        tree.insert(0, make_file(100), "small.py");
         let stats = SubtreeStats::compute(&tree);
         let layout = TreemapLayout::compute(&tree, &stats, egui::vec2(800.0, 600.0), tree.root());
         assert_eq!(layout.rects.len(), 2);
@@ -748,9 +747,9 @@ mod tests {
     #[test]
     fn layout_nested_directory() {
         let mut tree = DirTree::new("/root");
-        let sub = tree.insert(0, make_dir("sub"));
-        tree.insert(sub, make_file("a.rs", 500, Some("rs")));
-        tree.insert(sub, make_file("b.rs", 500, Some("rs")));
+        let sub = tree.insert(0, make_dir(), "sub");
+        tree.insert(sub, make_file(500), "a.rs");
+        tree.insert(sub, make_file(500), "b.rs");
         let stats = SubtreeStats::compute(&tree);
         let layout = TreemapLayout::compute(&tree, &stats, egui::vec2(800.0, 600.0), tree.root());
         assert_eq!(layout.rects.len(), 2);
@@ -763,8 +762,8 @@ mod tests {
     #[test]
     fn layout_zero_size_excluded() {
         let mut tree = DirTree::new("/root");
-        tree.insert(0, make_file("a.rs", 1000, Some("rs")));
-        tree.insert(0, make_file("empty.rs", 0, Some("rs")));
+        tree.insert(0, make_file(1000), "a.rs");
+        tree.insert(0, make_file(0), "empty.rs");
         let stats = SubtreeStats::compute(&tree);
         let layout = TreemapLayout::compute(&tree, &stats, egui::vec2(800.0, 600.0), tree.root());
         assert_eq!(layout.rects.len(), 1);
@@ -783,9 +782,9 @@ mod tests {
     fn layout_color_matches_extension() {
         let mut tree = DirTree::new("/root");
         let ext_idx = tree.intern_extension(Some("rs"));
-        let mut node = make_file("a.rs", 1000, Some("rs"));
+        let mut node = make_file(1000);
         node.extension = ext_idx;
-        tree.insert(0, node);
+        tree.insert(0, node, "a.rs");
         let stats = SubtreeStats::compute(&tree);
         let layout = TreemapLayout::compute(&tree, &stats, egui::vec2(800.0, 600.0), tree.root());
         let expected = ext_stats::hsl_to_color32(&rds_core::stats::color_for_extension("rs"));
@@ -795,7 +794,7 @@ mod tests {
     #[test]
     fn layout_no_extension_color() {
         let mut tree = DirTree::new("/root");
-        tree.insert(0, make_file("Makefile", 1000, None));
+        tree.insert(0, make_file(1000), "Makefile");
         let stats = SubtreeStats::compute(&tree);
         let layout = TreemapLayout::compute(&tree, &stats, egui::vec2(800.0, 600.0), tree.root());
         let expected = ext_stats::hsl_to_color32(&rds_core::stats::color_for_extension(""));
@@ -806,10 +805,8 @@ mod tests {
     fn layout_no_zero_area_rects() {
         let mut tree = DirTree::new("/root");
         for i in 0..20 {
-            tree.insert(
-                0,
-                make_file(&format!("f{i}.rs"), (i as u64 + 1) * 100, Some("rs")),
-            );
+            let name = format!("f{i}.rs");
+            tree.insert(0, make_file((i as u64 + 1) * 100), &name);
         }
         let stats = SubtreeStats::compute(&tree);
         let layout = TreemapLayout::compute(&tree, &stats, egui::vec2(800.0, 600.0), tree.root());
@@ -822,7 +819,7 @@ mod tests {
     #[test]
     fn layout_zero_size_bounds() {
         let mut tree = DirTree::new("/root");
-        tree.insert(0, make_file("a.rs", 1000, Some("rs")));
+        tree.insert(0, make_file(1000), "a.rs");
         let stats = SubtreeStats::compute(&tree);
         let layout = TreemapLayout::compute(&tree, &stats, egui::vec2(0.0, 0.0), tree.root());
         assert!(layout.rects.is_empty());
@@ -831,10 +828,10 @@ mod tests {
     #[test]
     fn layout_deeply_nested_files() {
         let mut tree = DirTree::new("/root");
-        let d1 = tree.insert(0, make_dir("d1"));
-        let d2 = tree.insert(d1, make_dir("d2"));
-        let d3 = tree.insert(d2, make_dir("d3"));
-        tree.insert(d3, make_file("deep.rs", 1000, Some("rs")));
+        let d1 = tree.insert(0, make_dir(), "d1");
+        let d2 = tree.insert(d1, make_dir(), "d2");
+        let d3 = tree.insert(d2, make_dir(), "d3");
+        tree.insert(d3, make_file(1000), "deep.rs");
         let stats = SubtreeStats::compute(&tree);
         let layout = TreemapLayout::compute(&tree, &stats, egui::vec2(800.0, 600.0), tree.root());
         assert_eq!(layout.rects.len(), 1);
@@ -1014,9 +1011,9 @@ mod tests {
     #[test]
     fn layout_tracks_depth() {
         let mut tree = DirTree::new("/root");
-        tree.insert(0, make_file("top.rs", 500, Some("rs")));
-        let sub = tree.insert(0, make_dir("sub"));
-        tree.insert(sub, make_file("deep.rs", 500, Some("rs")));
+        tree.insert(0, make_file(500), "top.rs");
+        let sub = tree.insert(0, make_dir(), "sub");
+        tree.insert(sub, make_file(500), "deep.rs");
         let stats = SubtreeStats::compute(&tree);
         let layout = TreemapLayout::compute(&tree, &stats, egui::vec2(200.0, 100.0), tree.root());
 
@@ -1030,11 +1027,11 @@ mod tests {
     #[test]
     fn layout_deeply_nested_depth() {
         let mut tree = DirTree::new("/root");
-        let d1 = tree.insert(0, make_dir("d1"));
-        let d2 = tree.insert(d1, make_dir("d2"));
-        let d3 = tree.insert(d2, make_dir("d3"));
-        tree.insert(d3, make_file("deep.rs", 500, Some("rs")));
-        tree.insert(0, make_file("top.rs", 500, Some("rs")));
+        let d1 = tree.insert(0, make_dir(), "d1");
+        let d2 = tree.insert(d1, make_dir(), "d2");
+        let d3 = tree.insert(d2, make_dir(), "d3");
+        tree.insert(d3, make_file(500), "deep.rs");
+        tree.insert(0, make_file(500), "top.rs");
         let stats = SubtreeStats::compute(&tree);
         let layout = TreemapLayout::compute(&tree, &stats, egui::vec2(200.0, 100.0), tree.root());
 
@@ -1047,9 +1044,9 @@ mod tests {
     #[test]
     fn layout_cushion_accumulates_across_levels() {
         let mut tree = DirTree::new("/root");
-        let sub = tree.insert(0, make_dir("sub"));
-        tree.insert(sub, make_file("deep.rs", 1000, Some("rs")));
-        tree.insert(0, make_file("top.rs", 1000, Some("rs")));
+        let sub = tree.insert(0, make_dir(), "sub");
+        tree.insert(sub, make_file(1000), "deep.rs");
+        tree.insert(0, make_file(1000), "top.rs");
         let stats = SubtreeStats::compute(&tree);
         let layout = TreemapLayout::compute(&tree, &stats, egui::vec2(200.0, 100.0), tree.root());
 
@@ -1067,7 +1064,7 @@ mod tests {
     #[test]
     fn layout_cushion_coefficients_nonzero() {
         let mut tree = DirTree::new("/root");
-        tree.insert(0, make_file("a.rs", 1000, Some("rs")));
+        tree.insert(0, make_file(1000), "a.rs");
         let stats = SubtreeStats::compute(&tree);
         let layout = TreemapLayout::compute(&tree, &stats, egui::vec2(100.0, 100.0), tree.root());
 
@@ -1203,12 +1200,11 @@ mod tests {
         // Build a tree with 100 dirs x 500 files = 50,000 leaf files.
         let mut tree = DirTree::new("/root");
         for d in 0..100 {
-            let dir = tree.insert(0, make_dir(&format!("dir_{d}")));
+            let dir_name = format!("dir_{d}");
+            let dir = tree.insert(0, make_dir(), &dir_name);
             for f in 0..500 {
-                tree.insert(
-                    dir,
-                    make_file(&format!("file_{f}.rs"), (f as u64 + 1) * 100, Some("rs")),
-                );
+                let name = format!("file_{f}.rs");
+                tree.insert(dir, make_file((f as u64 + 1) * 100), &name);
             }
         }
         let stats = SubtreeStats::compute(&tree);
@@ -1254,10 +1250,10 @@ mod tests {
     #[test]
     fn layout_with_custom_root_shows_subtree_only() {
         let mut tree = DirTree::new("/root");
-        let sub = tree.insert(0, make_dir("sub"));
-        tree.insert(sub, make_file("a.rs", 500, Some("rs")));
-        tree.insert(sub, make_file("b.rs", 300, Some("rs")));
-        tree.insert(0, make_file("top.txt", 200, Some("txt")));
+        let sub = tree.insert(0, make_dir(), "sub");
+        tree.insert(sub, make_file(500), "a.rs");
+        tree.insert(sub, make_file(300), "b.rs");
+        tree.insert(0, make_file(200), "top.txt");
 
         let stats = SubtreeStats::compute(&tree);
         let layout = TreemapLayout::compute(&tree, &stats, egui::vec2(800.0, 600.0), sub);
@@ -1273,8 +1269,8 @@ mod tests {
     #[test]
     fn layout_custom_root_stores_last_root() {
         let mut tree = DirTree::new("/root");
-        let sub = tree.insert(0, make_dir("sub"));
-        tree.insert(sub, make_file("a.rs", 100, Some("rs")));
+        let sub = tree.insert(0, make_dir(), "sub");
+        tree.insert(sub, make_file(100), "a.rs");
         let stats = SubtreeStats::compute(&tree);
         let layout = TreemapLayout::compute(&tree, &stats, egui::vec2(800.0, 600.0), sub);
         assert_eq!(layout.last_root, sub);
@@ -1283,24 +1279,24 @@ mod tests {
     #[test]
     fn drill_target_file_inside_subdir() {
         let mut tree = DirTree::new("/root");
-        let sub = tree.insert(0, make_dir("sub"));
-        let file = tree.insert(sub, make_file("a.rs", 100, Some("rs")));
+        let sub = tree.insert(0, make_dir(), "sub");
+        let file = tree.insert(sub, make_file(100), "a.rs");
         assert_eq!(find_drill_target(&tree, file, 0), Some(sub));
     }
 
     #[test]
     fn drill_target_file_at_top_level_returns_none() {
         let mut tree = DirTree::new("/root");
-        let file = tree.insert(0, make_file("a.rs", 100, Some("rs")));
+        let file = tree.insert(0, make_file(100), "a.rs");
         assert_eq!(find_drill_target(&tree, file, 0), None);
     }
 
     #[test]
     fn drill_target_deeply_nested_file() {
         let mut tree = DirTree::new("/root");
-        let d1 = tree.insert(0, make_dir("d1"));
-        let d2 = tree.insert(d1, make_dir("d2"));
-        let file = tree.insert(d2, make_file("deep.rs", 100, Some("rs")));
+        let d1 = tree.insert(0, make_dir(), "d1");
+        let d2 = tree.insert(d1, make_dir(), "d2");
+        let file = tree.insert(d2, make_file(100), "deep.rs");
         assert_eq!(find_drill_target(&tree, file, 0), Some(d1));
         assert_eq!(find_drill_target(&tree, file, d1), Some(d2));
         assert_eq!(find_drill_target(&tree, file, d2), None);
@@ -1317,7 +1313,7 @@ mod tests {
     #[test]
     fn breadcrumb_chain_one_level_deep() {
         let mut tree = DirTree::new("/root");
-        let sub = tree.insert(0, make_dir("sub"));
+        let sub = tree.insert(0, make_dir(), "sub");
         let chain = breadcrumb_chain(&tree, sub);
         assert_eq!(chain.len(), 2);
         assert_eq!(chain[0], (0, "/root".to_string()));
@@ -1327,9 +1323,9 @@ mod tests {
     #[test]
     fn breadcrumb_chain_three_levels() {
         let mut tree = DirTree::new("/root");
-        let d1 = tree.insert(0, make_dir("d1"));
-        let d2 = tree.insert(d1, make_dir("d2"));
-        let d3 = tree.insert(d2, make_dir("d3"));
+        let d1 = tree.insert(0, make_dir(), "d1");
+        let d2 = tree.insert(d1, make_dir(), "d2");
+        let d3 = tree.insert(d2, make_dir(), "d3");
         let chain = breadcrumb_chain(&tree, d3);
         assert_eq!(chain.len(), 4);
         assert_eq!(chain[0], (0, "/root".to_string()));
@@ -1345,12 +1341,11 @@ mod tests {
         // 200 directories x 500 files = 100,000 leaf files.
         let mut tree = DirTree::new("/root");
         for d in 0..200 {
-            let dir = tree.insert(0, make_dir(&format!("dir_{d}")));
+            let dir_name = format!("dir_{d}");
+            let dir = tree.insert(0, make_dir(), &dir_name);
             for f in 0..500 {
-                tree.insert(
-                    dir,
-                    make_file(&format!("file_{f}.rs"), (f as u64 + 1) * 10, Some("rs")),
-                );
+                let name = format!("file_{f}.rs");
+                tree.insert(dir, make_file((f as u64 + 1) * 10), &name);
             }
         }
         let stats = SubtreeStats::compute(&tree);
@@ -1377,10 +1372,8 @@ mod tests {
         // 100 files — well below the 50k cap.
         let mut tree = DirTree::new("/root");
         for i in 0..100 {
-            tree.insert(
-                0,
-                make_file(&format!("file_{i}.rs"), (i as u64 + 1) * 100, Some("rs")),
-            );
+            let name = format!("file_{i}.rs");
+            tree.insert(0, make_file((i as u64 + 1) * 100), &name);
         }
         let stats = SubtreeStats::compute(&tree);
         let layout = TreemapLayout::compute(&tree, &stats, egui::vec2(800.0, 600.0), tree.root());
@@ -1397,12 +1390,11 @@ mod tests {
         // 200 dirs x 500 files = 100,000 — triggers aggregation.
         let mut tree = DirTree::new("/root");
         for d in 0..200 {
-            let dir = tree.insert(0, make_dir(&format!("dir_{d}")));
+            let dir_name = format!("dir_{d}");
+            let dir = tree.insert(0, make_dir(), &dir_name);
             for f in 0..500 {
-                tree.insert(
-                    dir,
-                    make_file(&format!("file_{f}.rs"), (f as u64 + 1) * 10, Some("rs")),
-                );
+                let name = format!("file_{f}.rs");
+                tree.insert(dir, make_file((f as u64 + 1) * 10), &name);
             }
         }
         let stats = SubtreeStats::compute(&tree);
@@ -1424,9 +1416,10 @@ mod tests {
     fn aggregated_rect_size_sum_matches() {
         // 1 directory with 60,000 files of size 1 each.
         let mut tree = DirTree::new("/root");
-        let dir = tree.insert(0, make_dir("big_dir"));
+        let dir = tree.insert(0, make_dir(), "big_dir");
         for f in 0..60_000 {
-            tree.insert(dir, make_file(&format!("f{f}.txt"), 1, Some("txt")));
+            let name = format!("f{f}.txt");
+            tree.insert(dir, make_file(1), &name);
         }
         let stats = SubtreeStats::compute(&tree);
         let layout = TreemapLayout::compute(&tree, &stats, egui::vec2(800.0, 600.0), tree.root());
