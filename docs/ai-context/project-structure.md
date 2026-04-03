@@ -2,10 +2,11 @@
 
 ```
 rustdirstat/
-  Cargo.toml                  # Workspace root; all dep versions in [workspace.dependencies]
+  Cargo.toml                  # Workspace root; all dep versions in [workspace.dependencies]; package metadata (license, description, repository)
   Cargo.lock                  # Committed (binary crate — reproducible builds)
+  LICENSE                     # MIT license
   src/
-    main.rs                   # CLI parsing (clap), --scan-only headless mode, tracing init with RUST_LOG env filter, config load/save (TOML via directories), eframe window launch (1024x768 default, 640x480 minimum)
+    main.rs                   # CLI parsing (clap), --scan-only headless mode, tracing init with RUST_LOG env filter, config load/save (TOML via directories), eframe window launch (1024x768 default, 640x480 minimum), app icon loading via include_bytes! + image crate
   crates/
     rds-core/                 # Shared data types — ZERO deps beyond serde
       Cargo.toml
@@ -48,12 +49,16 @@ rustdirstat/
         settings.rs            # Settings dialog: SettingsDialogState, exclude patterns editor, sort order/color scheme ComboBox, Apply/Cancel
       benches/
         treemap_bench.rs      # Criterion benchmarks: treemap layout, subtree stats, aggregation at 1k-500k scale
+  assets/
+    icon-256.png              # Treemap-style app icon (256x256 PNG)
   .github/
     workflows/
       ci.yml                  # Build + test + clippy + fmt on ubuntu/macos/windows
                               # Enforces rds-core zero-dep invariant via cargo tree
+      release.yml             # Release workflow: cross-platform binary builds on tag push (v*)
   scripts/
     benchmark-comparison.sh   # hyperfine-based comparison of rustdirstat --scan-only vs dust vs dua
+    generate-icon.py          # One-time icon generation script (creates assets/icon-256.png)
   docs/
     milestones.md             # MS1-MS21 roadmap with dependency graph
     benchmarks.md             # Memory usage audit, struct sizes, scan throughput, treemap rendering budget
@@ -63,6 +68,8 @@ rustdirstat/
     superpowers/
       specs/
         2026-03-19-rustdirstat-design.md  # Full design specification
+      plans/
+        2026-03-23-ms21-packaging-distribution.md  # MS21 implementation plan
   plans/
     ms1-workspace-scaffold-ci.md  # MS1 plan (completed)
     ms2-core-data-types.md        # MS2 plan (completed)
@@ -77,7 +84,7 @@ rustdirstat/
     ms11-incremental-scan-display.md # MS11 plan (completed)
     ms12-duplicate-detection.md      # MS12 plan (completed)
     ms13-delete-action-trash.md      # MS13 plan (completed)
-  justfile                    # Task runner: build, test, lint, fmt, run, check, clean, bench, bench-report, bench-compare
+  justfile                    # Task runner: build, test, lint, fmt, run, check, clean, bench, bench-report, bench-compare, release-build
   .gitignore                  # Ignores /target; Cargo.lock NOT ignored
   CLAUDE.md                   # Root AI context with file/directory guide
   README.md                   # Architecture, design decisions, invariants
@@ -157,4 +164,4 @@ rustdirstat/
 | 18 | Error Handling & Edge Cases | Done |
 | 19 | Performance Optimization | Done |
 | 20 | Cross-Platform Polish | Done |
-| 21 | See docs/milestones.md | Pending |
+| 21 | Packaging & Distribution | Done |

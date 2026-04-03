@@ -1,0 +1,124 @@
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build-release:
+    name: Build (${{ matrix.name }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: linux-x86_64
+            os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+          - name: macos-universal
+            os: macos-latest
+            target: universal
+          - name: windows-x86_64
+            os: windows-latest
+            target: x86_64-pc-windows-msvc
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: release-${{ matrix.target }}
+
+      # eframe on Linux requires X11/GTK system libraries not pre-installed on
+      # GitHub Actions ubuntu runners.
+      - name: Install Linux system dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libxcb-render0-dev libxcb-shape0-dev libxcb-xfixes0-dev \
+            libxkbcommon-dev libgtk-3-dev libatk1.0-dev
+
+      # macOS: add x86_64 target for universal binary via lipo.
+      - name: Add x86_64 target (macOS)
+        if: runner.os == 'macOS'
+        run: rustup target add x86_64-apple-darwin
+
+      # Verify Cargo.toml version matches the git tag.
+      - name: Verify version consistency
+        shell: bash
+        run: |
+          TAG="${GITHUB_REF_NAME#v}"
+          CARGO_VER=$(grep '^version' Cargo.toml | head -1 | sed 's/.*"\(.*\)".*/\1/')
+          if [ "$TAG" != "$CARGO_VER" ]; then
+            echo "ERROR: Tag v$TAG does not match Cargo.toml version $CARGO_VER"
+            exit 1
+          fi
+          echo "Version $TAG verified"
+
+      # Build: Linux and Windows (single target).
+      - name: Build release binary
+        if: matrix.target != 'universal'
+        run: cargo build --release
+
+      # Build: macOS universal binary (both architectures).
+      - name: Build macOS universal binary
+        if: matrix.target == 'universal'
+        run: |
+          cargo build --release --target aarch64-apple-darwin
+          cargo build --release --target x86_64-apple-darwin
+          lipo -create \
+            target/aarch64-apple-darwin/release/rustdirstat \
+            target/x86_64-apple-darwin/release/rustdirstat \
+            -output target/release/rustdirstat
+
+      # Package: Unix (.tar.gz)
+      - name: Package (Unix)
+        if: runner.os != 'Windows'
+        run: |
+          cd target/release
+          tar czf ../../rustdirstat-${{ github.ref_name }}-${{ matrix.name }}.tar.gz rustdirstat
+          cd ../..
+
+      # Package: Windows (.zip)
+      - name: Package (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          Compress-Archive `
+            -Path target\release\rustdirstat.exe `
+            -DestinationPath rustdirstat-${{ github.ref_name }}-${{ matrix.name }}.zip
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: rustdirstat-${{ matrix.name }}
+          path: rustdirstat-${{ github.ref_name }}-*
+
+  create-release:
+    name: Create GitHub Release
+    needs: build-release
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          merge-multiple: true
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v2
+        with:
+          generate_release_notes: true
+          files: |
+            rustdirstat-*.tar.gz
+            rustdirstat-*.zip

@@ -32,6 +32,7 @@ glob = "0.3"
 walkdir = "2.5.0"
 tempfile = "3.27.0"
 criterion = { version = "0.5", features = ["html_reports"] }
+image = "0.25"
 
 # Binary crate. Owns CLI parsing and eframe bootstrap; delegates scanning
 # and rendering to rds-scanner and rds-gui respectively.
@@ -39,6 +40,13 @@ criterion = { version = "0.5", features = ["html_reports"] }
 name = "rustdirstat"
 version = "0.1.0"
 edition = "2024"
+license = "MIT"
+description = "Cross-platform disk usage analyzer with interactive treemap visualization"
+repository = "https://github.com/Psysician/rustdirstat"
+homepage = "https://github.com/Psysician/rustdirstat"
+keywords = ["disk-usage", "treemap", "filesystem", "analyzer", "windirstat"]
+categories = ["command-line-utilities", "filesystem"]
+readme = "README.md"
 
 [dependencies]
 clap = { workspace = true }
@@ -53,3 +61,4 @@ tracing-subscriber = { workspace = true }
 directories = { workspace = true }
 toml = { workspace = true }
 serde = { workspace = true }
+image = { workspace = true }

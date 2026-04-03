@@ -142,10 +142,21 @@ fn main() -> eframe::Result {
 
     let (config, config_path) = load_config();
 
+    let icon_image = image::load_from_memory(include_bytes!("../assets/icon-256.png"))
+        .expect("embedded icon is valid PNG")
+        .to_rgba8();
+    let (icon_w, icon_h) = icon_image.dimensions();
+    let icon_data = egui::IconData {
+        rgba: icon_image.into_raw(),
+        width: icon_w,
+        height: icon_h,
+    };
+
     let native_options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
             .with_inner_size([1024.0, 768.0])
-            .with_min_inner_size([640.0, 480.0]),
+            .with_min_inner_size([640.0, 480.0])
+            .with_icon(Arc::new(icon_data)),
         ..Default::default()
     };
 

@@ -1,6 +1,72 @@
 # rustdirstat
 
-Cross-platform disk usage analyzer. Rust reimplementation of WinDirStat.
+Cross-platform disk usage analyzer with interactive treemap visualization. A Rust reimplementation of [WinDirStat](https://windirstat.net/).
+
+**Features:**
+- Parallel filesystem scanning via jwalk (utilizes all CPU cores)
+- Interactive squarified treemap with cushion shading
+- Three synchronized views: directory tree, treemap, extension statistics
+- Duplicate file detection via SHA-256
+- Cleanup actions: delete to recycle bin, open in file manager, custom commands
+- CSV/JSON export of scan results
+- Dark/light/system theme support
+
+## Installation
+
+### Pre-built Binaries
+
+Download the latest release from [GitHub Releases](https://github.com/Psysician/rustdirstat/releases):
+
+| Platform | Archive |
+|----------|---------|
+| Linux (x86_64) | `rustdirstat-vX.Y.Z-linux-x86_64.tar.gz` |
+| macOS (Universal: Intel + Apple Silicon) | `rustdirstat-vX.Y.Z-macos-universal.tar.gz` |
+| Windows (x86_64) | `rustdirstat-vX.Y.Z-windows-x86_64.zip` |
+
+Extract the archive and place the `rustdirstat` binary somewhere in your `PATH`.
+
+### From Source (cargo)
+
+```bash
+cargo install --git https://github.com/Psysician/rustdirstat
+```
+
+Requires Rust 1.85+ and platform-specific dependencies (see [Development](#development)).
+
+### Build from Source
+
+```bash
+git clone https://github.com/Psysician/rustdirstat.git
+cd rustdirstat
+cargo build --release
+# Binary: target/release/rustdirstat
+```
+
+## Usage
+
+```bash
+# Launch the GUI
+rustdirstat
+
+# Launch and immediately scan a directory
+rustdirstat /path/to/scan
+
+# Headless scan (print stats to stdout, no GUI)
+rustdirstat --scan-only /path/to/scan
+```
+
+### Keyboard Shortcuts
+
+| Shortcut | Action |
+|----------|--------|
+| `Ctrl+O` / `Cmd+O` | Open directory picker |
+| `F5` | Rescan current directory |
+| `Escape` | Close dialog / cancel scan / deselect |
+| `Backspace` | Navigate up in treemap |
+
+## Screenshots
+
+<!-- TODO: Add screenshots after first release -->
 
 ## Crate Layout
 
@@ -51,6 +117,13 @@ just run      # cargo run
 just fmt      # cargo fmt --all
 ```
 
+Linux build dependencies:
+```bash
+sudo apt-get install -y \
+  libxcb-render0-dev libxcb-shape0-dev libxcb-xfixes0-dev \
+  libxkbcommon-dev libgtk-3-dev libatk1.0-dev
+```
+
 ## CI
 
 GitHub Actions runs on ubuntu, macos, and windows. The Linux job installs
@@ -65,3 +138,7 @@ The CI pipeline enforces the `rds-core` zero-dependency invariant via
 workspace dependencies. Upfront declaration prevents Cargo.toml churn and
 version drift. If a compatibility issue arises, vendoring or forking is
 the fallback.
+
+## License
+
+[MIT](LICENSE)
