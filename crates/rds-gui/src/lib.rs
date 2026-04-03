@@ -342,6 +342,7 @@ impl RustDirStatApp {
         }
         if let Some(ref tree) = self.tree {
             self.subtree_stats = Some(tree_view::SubtreeStats::compute(tree));
+            self.tree_view_state.invalidate_sorted_cache();
             self.tree_view_state.expand(tree.root());
         }
         self.treemap_layout = None;
@@ -477,6 +478,7 @@ impl RustDirStatApp {
         self.extension_stats = Some(rds_core::stats::compute_extension_stats(tree));
         self.treemap_layout = None;
         self.treemap_mesh_cache = None;
+        self.tree_view_state.invalidate_sorted_cache();
         self.tree_view_state.expand(tree.root());
         self.last_live_recompute = Some(now);
         self.live_node_count = current_count;
@@ -508,6 +510,7 @@ impl RustDirStatApp {
                 self.extension_stats = Some(rds_core::stats::compute_extension_stats(tree_ref));
                 self.treemap_layout = None;
                 self.treemap_mesh_cache = None;
+                self.tree_view_state.invalidate_sorted_cache();
 
                 // Clear selection if it pointed at a now-deleted node (the target
                 // or any of its descendants).
@@ -816,12 +819,21 @@ impl eframe::App for RustDirStatApp {
                 const BTN_SETTINGS: f32 = 80.0;
                 const BTN_EXPORT: f32 = 70.0;
                 const SEPARATORS: f32 = 40.0; // ~10px each x4
+                // In release builds the "Detect Duplicates" checkbox and its separator are hidden.
+                #[cfg(debug_assertions)]
                 const TOOLBAR_FIXED_CONTROLS_WIDTH: f32 = BTN_SCAN
                     + BTN_DETECT_DUPES
                     + BTN_COMMANDS
                     + BTN_SETTINGS
                     + BTN_EXPORT
                     + SEPARATORS;
+                #[cfg(not(debug_assertions))]
+                const TOOLBAR_FIXED_CONTROLS_WIDTH: f32 = BTN_SCAN
+                    + BTN_COMMANDS
+                    + BTN_SETTINGS
+                    + BTN_EXPORT
+                    + SEPARATORS
+                    - 10.0; // subtract one hidden separator
                 let text_width = (ui.available_width() - TOOLBAR_FIXED_CONTROLS_WIDTH).max(100.0);
                 let response = ui.add(
                     egui::TextEdit::singleline(&mut self.path_input)
@@ -850,8 +862,9 @@ impl eframe::App for RustDirStatApp {
                 }
 
                 ui.separator();
+                #[cfg(debug_assertions)]
                 ui.checkbox(&mut self.hash_duplicates_enabled, "Detect Duplicates");
-
+                #[cfg(debug_assertions)]
                 ui.separator();
                 if ui.button("Commands...").clicked() {
                     self.command_editor.show = !self.command_editor.show;
@@ -1033,6 +1046,7 @@ impl eframe::App for RustDirStatApp {
                         let prev_root = self.treemap_root;
                         treemap::show(
                             layout,
+                            stats,
                             tree,
                             &mut self.selected_node,
                             &self.selected_extension,

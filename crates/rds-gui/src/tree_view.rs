@@ -6,6 +6,7 @@
 //! arena. (ref: DL-001)
 
 use std::cmp::Reverse;
+use std::collections::HashMap;
 use std::collections::HashSet;
 
 use rds_core::CustomCommand;
@@ -81,6 +82,10 @@ pub(crate) struct TreeViewState {
     last_synced_selection: Option<usize>,
     /// When true, the next render of the selected node calls `scroll_to_me`. (ref: DL-003)
     pending_scroll: bool,
+    /// Cached sorted children per directory index. Invalidated when the tree changes.
+    sorted_cache: HashMap<usize, Vec<usize>>,
+    /// The sort order used to build `sorted_cache`. If sort_order changes, cache is cleared.
+    cached_sort_order: Option<SortOrder>,
 }
 
 impl TreeViewState {
@@ -89,6 +94,8 @@ impl TreeViewState {
             expanded: HashSet::new(),
             last_synced_selection: None,
             pending_scroll: false,
+            sorted_cache: HashMap::new(),
+            cached_sort_order: None,
         }
     }
 
@@ -96,6 +103,15 @@ impl TreeViewState {
         self.expanded.clear();
         self.last_synced_selection = None;
         self.pending_scroll = false;
+        self.sorted_cache.clear();
+        self.cached_sort_order = None;
+    }
+
+    /// Invalidates the sorted-children cache. Call after tree structure changes
+    /// (node insertion, deletion) so stale sort results are not used.
+    pub fn invalidate_sorted_cache(&mut self) {
+        self.sorted_cache.clear();
+        self.cached_sort_order = None;
     }
 
     pub fn toggle(&mut self, index: usize) {
@@ -319,9 +335,20 @@ fn render_node(
         }
     });
 
-    // Recurse into children sorted by size descending.
+    // Recurse into children sorted according to sort_order.
+    // Sort results are cached in TreeViewState and invalidated when the tree changes,
+    // avoiding per-frame Vec allocation + sort for every expanded directory.
     if is_expanded {
-        let children = sorted_children(tree, index, stats, sort_order);
+        // Clear cache if sort order changed.
+        if state.cached_sort_order != Some(sort_order) {
+            state.sorted_cache.clear();
+            state.cached_sort_order = Some(sort_order);
+        }
+        // Compute and cache if not yet present.
+        state.sorted_cache.entry(index).or_insert_with(|| sorted_children(tree, index, stats, sort_order));
+        // Clone the cached Vec to allow mutable `state` borrow in recursive call.
+        // Vec<usize> clone is O(k), far cheaper than the O(k log k) sort it replaces.
+        let children = state.sorted_cache[&index].clone();
         for child_idx in children {
             render_node(
                 tree,

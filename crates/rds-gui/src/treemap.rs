@@ -507,6 +507,7 @@ pub(crate) fn build_mesh_cache(
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn show(
     layout: &TreemapLayout,
+    stats: &crate::tree_view::SubtreeStats,
     tree: &DirTree,
     selected: &mut Option<usize>,
     highlighted_extension: &Option<String>,
@@ -632,7 +633,7 @@ pub(crate) fn show(
                         let node = tree.get(sel_idx).unwrap();
                         let path = tree.path(sel_idx);
                         let size = if node.is_dir() {
-                            tree.subtree_size(sel_idx)
+                            stats.size(sel_idx)
                         } else {
                             node.size
                         };
