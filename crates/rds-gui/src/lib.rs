@@ -984,6 +984,7 @@ impl eframe::App for RustDirStatApp {
         egui::TopBottomPanel::bottom("treemap_panel")
             .resizable(true)
             .default_height(300.0)
+            .frame(egui::Frame::new().fill(egui::Color32::from_rgb(30, 30, 30)))
             .show(ctx, |ui| {
                 if let (Some(tree), Some(stats)) = (self.tree.as_ref(), self.subtree_stats.as_ref())
                 {
