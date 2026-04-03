@@ -32,7 +32,7 @@ glob = "0.3"
 walkdir = "2.5.0"
 tempfile = "3.27.0"
 criterion = { version = "0.5", features = ["html_reports"] }
-image = "0.25"
+image = { version = "0.25", default-features = false, features = ["png"] }
 
 # Binary crate. Owns CLI parsing and eframe bootstrap; delegates scanning
 # and rendering to rds-scanner and rds-gui respectively.
