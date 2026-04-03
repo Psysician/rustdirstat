@@ -984,8 +984,12 @@ impl eframe::App for RustDirStatApp {
         egui::TopBottomPanel::bottom("treemap_panel")
             .resizable(true)
             .default_height(300.0)
-            .frame(egui::Frame::new().fill(egui::Color32::from_rgb(30, 30, 30)))
             .show(ctx, |ui| {
+                // Paint dark background over the entire panel (including frame margins)
+                // so no default grey leaks through gaps in the treemap.
+                ui.painter()
+                    .rect_filled(ui.max_rect(), 0.0, egui::Color32::from_rgb(30, 30, 30));
+
                 if let (Some(tree), Some(stats)) = (self.tree.as_ref(), self.subtree_stats.as_ref())
                 {
                     // Breadcrumb navigation — only visible when drilled in.

@@ -518,14 +518,10 @@ pub(crate) fn show(
     mesh_cache: &mut Option<TreemapMeshCache>,
     ui: &mut egui::Ui,
 ) {
-    // Allocate the full available space so no grey panel background leaks through.
-    let paint_size = ui.available_size().max(layout.last_size);
-    let (response, painter) = ui.allocate_painter(paint_size, egui::Sense::click());
+    // Allocate exactly the layout size for correct rect positioning.
+    // The dark background is painted by the parent panel on ui.max_rect().
+    let (response, painter) = ui.allocate_painter(ui.available_size(), egui::Sense::click());
     let offset = response.rect.min.to_vec2();
-
-    // Dark background fill — gaps between rects and any size mismatch show as
-    // dark instead of the panel's default grey, matching WinDirStat's look.
-    painter.rect_filled(response.rect, 0.0, egui::Color32::from_rgb(30, 30, 30));
 
     // Rebuild mesh cache if stale (extension filter or offset changed).
     let needs_rebuild = mesh_cache.as_ref().is_none_or(|c| {
