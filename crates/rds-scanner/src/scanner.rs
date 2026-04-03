@@ -9,7 +9,7 @@ use crossbeam_channel::Sender;
 use glob::Pattern;
 use jwalk::WalkDir;
 use rds_core::scan::{ScanConfig, ScanEvent, ScanStats};
-use rds_core::tree::FileNode;
+use rds_core::tree::{FileNode, NO_PARENT};
 use tracing::{debug, info_span, warn};
 
 use crate::duplicate::DuplicateDetector;
@@ -34,7 +34,7 @@ fn epoch_seconds(metadata: &std::fs::Metadata) -> Option<u64> {
 fn send_root_node(
     config: &ScanConfig,
     tx: &Sender<ScanEvent>,
-    path_to_index: &mut HashMap<PathBuf, usize>,
+    path_to_index: &mut HashMap<PathBuf, u32>,
 ) -> Result<(), ()> {
     let root_metadata = match std::fs::metadata(&config.root) {
         Ok(m) => m,
@@ -47,42 +47,48 @@ fn send_root_node(
         }
     };
 
-    let root_modified = epoch_seconds(&root_metadata);
-    let root_name = config.root.to_string_lossy().into_owned();
+    let root_modified = epoch_seconds(&root_metadata).unwrap_or(0);
+    let root_name: Box<str> = config.root.to_string_lossy().into_owned().into();
 
     let root_node = FileNode {
-        name: root_name,
+        name_offset: 0,
+        name_len: 0,
         size: 0,
-        is_dir: true,
-        children: Vec::new(),
-        parent: None,
-        extension: None,
+        first_child: u32::MAX,
+        next_sibling: u32::MAX,
         modified: root_modified,
-        deleted: false,
+        parent: NO_PARENT,
+        extension: 0,
+        flags: 1, // is_dir
     };
 
     if tx
         .send(ScanEvent::NodeDiscovered {
             node: root_node,
             parent_index: None,
+            extension_name: None,
+            node_name: root_name,
         })
         .is_err()
     {
         return Err(());
     }
 
-    path_to_index.insert(config.root.clone(), 0);
+    path_to_index.insert(config.root.clone(), 0u32);
     Ok(())
 }
 
-fn entry_to_node(entry: &jwalk::DirEntry<((), ())>) -> Result<FileNode, String> {
+#[allow(clippy::type_complexity)]
+fn entry_to_node(
+    entry: &jwalk::DirEntry<((), ())>,
+) -> Result<(FileNode, Option<Box<str>>, Box<str>), String> {
     let is_dir = entry.file_type().is_dir();
     let metadata = entry
         .metadata()
         .map_err(|e| format!("{}: {e}", entry.path().display()))?;
 
     let size = if is_dir { 0 } else { metadata.len() };
-    let modified = epoch_seconds(&metadata);
+    let modified = epoch_seconds(&metadata).unwrap_or(0);
 
     let ext = if is_dir {
         None
@@ -93,18 +99,26 @@ fn entry_to_node(entry: &jwalk::DirEntry<((), ())>) -> Result<FileNode, String> 
             .map(|e| e.to_string_lossy().to_lowercase())
     };
 
-    let name = entry.file_name().to_string_lossy().into_owned();
+    let name: Box<str> = entry.file_name().to_string_lossy().into_owned().into();
+    let flags = if is_dir { 1u8 } else { 0u8 };
 
-    Ok(FileNode {
+    let extension_name: Option<Box<str>> = ext.map(|e| e.into());
+
+    Ok((
+        FileNode {
+            name_offset: 0,
+            name_len: 0,
+            size,
+            first_child: u32::MAX,
+            next_sibling: u32::MAX,
+            modified,
+            parent: NO_PARENT,
+            extension: 0, // placeholder; GUI interns this
+            flags,
+        },
+        extension_name,
         name,
-        size,
-        is_dir,
-        children: Vec::new(),
-        parent: None,
-        extension: ext,
-        modified,
-        deleted: false,
-    })
+    ))
 }
 
 struct WalkAccum {
@@ -176,12 +190,12 @@ fn emit_node(
     entry_path: PathBuf,
     parent_idx: usize,
     tx: &Sender<ScanEvent>,
-    path_to_index: &mut HashMap<PathBuf, usize>,
+    path_to_index: &mut HashMap<PathBuf, u32>,
     acc: &mut WalkAccum,
     mut file_entries: Option<&mut Vec<FileEntry>>,
 ) -> Result<(), ()> {
-    let node = match entry_to_node(entry) {
-        Ok(n) => n,
+    let (node, extension_name, node_name) = match entry_to_node(entry) {
+        Ok(result) => result,
         Err(error) => {
             warn!(path = %entry_path.display(), %error, "metadata error");
             let _ = tx.send(ScanEvent::ScanError {
@@ -192,13 +206,15 @@ fn emit_node(
             return Ok(());
         }
     };
-    let is_dir = node.is_dir;
+    let is_dir = node.is_dir();
     let size = node.size;
 
     if tx
         .send(ScanEvent::NodeDiscovered {
             node,
             parent_index: Some(parent_idx),
+            extension_name,
+            node_name,
         })
         .is_err()
     {
@@ -222,7 +238,8 @@ fn emit_node(
             size,
         });
     }
-    path_to_index.insert(entry_path, acc.node_count);
+    debug_assert!(acc.node_count < u32::MAX as usize);
+    path_to_index.insert(entry_path, acc.node_count as u32);
     acc.node_count += 1;
     Ok(())
 }
@@ -247,7 +264,7 @@ impl Scanner {
             let _scan_guard = scan_span.enter();
 
             let start = Instant::now();
-            let mut path_to_index: HashMap<PathBuf, usize> =
+            let mut path_to_index: HashMap<PathBuf, u32> =
                 HashMap::with_capacity(config.max_nodes.unwrap_or(100_000).min(100_000));
             // path_to_index is only accessed from this thread (the jwalk result
             // iterator runs on the calling thread); process_read_dir callbacks run
@@ -384,7 +401,7 @@ impl Scanner {
         cancel: &Arc<AtomicBool>,
         max_nodes_reached: &Arc<AtomicBool>,
         exclude: &Arc<Vec<Pattern>>,
-        path_to_index: &mut HashMap<PathBuf, usize>,
+        path_to_index: &mut HashMap<PathBuf, u32>,
         acc: &mut WalkAccum,
         file_entries: &mut Option<Vec<FileEntry>>,
     ) {
@@ -457,7 +474,7 @@ impl Scanner {
             };
 
             let parent_idx = match path_to_index.get(&parent_path) {
-                Some(&idx) => idx,
+                Some(&idx) => idx as usize,
                 None => {
                     warn!(
                         path = %entry_path.display(),

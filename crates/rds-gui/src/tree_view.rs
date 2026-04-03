@@ -23,23 +23,23 @@ const TOGGLE_BUTTON_WIDTH: f32 = 18.0;
 /// bottom-up pass over the arena — O(n) total, O(1) per lookup.
 pub struct SubtreeStats {
     sizes: Vec<u64>,
-    file_counts: Vec<u64>,
+    file_counts: Vec<u32>,
 }
 
 impl SubtreeStats {
     pub fn compute(tree: &DirTree) -> Self {
         let len = tree.len();
         let mut sizes = vec![0u64; len];
-        let mut file_counts = vec![0u64; len];
+        let mut file_counts = vec![0u32; len];
 
         // Initialize with each node's own values.
         // Deleted (tombstoned) nodes contribute nothing.
         for i in 0..len {
             if let Some(node) = tree.get(i)
-                && !node.deleted
+                && !node.deleted()
             {
                 sizes[i] = node.size;
-                if !node.is_dir {
+                if !node.is_dir() {
                     file_counts[i] = 1;
                 }
             }
@@ -52,9 +52,10 @@ impl SubtreeStats {
         // Deleted nodes are skipped so their values never propagate upward.
         for i in (1..len).rev() {
             if let Some(node) = tree.get(i)
-                && !node.deleted
-                && let Some(parent) = node.parent
+                && !node.deleted()
+                && node.parent != rds_core::tree::NO_PARENT
             {
+                let parent = node.parent as usize;
                 sizes[parent] += sizes[i];
                 file_counts[parent] += file_counts[i];
             }
@@ -67,7 +68,7 @@ impl SubtreeStats {
         self.sizes.get(index).copied().unwrap_or(0)
     }
 
-    pub fn file_count(&self, index: usize) -> u64 {
+    pub fn file_count(&self, index: usize) -> u32 {
         self.file_counts.get(index).copied().unwrap_or(0)
     }
 }
@@ -121,28 +122,17 @@ pub(crate) fn sorted_children(
 ) -> Vec<usize> {
     let mut children: Vec<usize> = tree
         .children(index)
-        .iter()
-        .copied()
-        .filter(|&c| tree.get(c).is_some_and(|n| !n.deleted))
+        .map(|c| c as usize)
+        .filter(|&c| tree.get(c).is_some_and(|n| !n.deleted()))
         .collect();
     match sort_order {
         SortOrder::SizeDesc => children.sort_by(|&a, &b| stats.size(b).cmp(&stats.size(a))),
         SortOrder::SizeAsc => children.sort_by(|&a, &b| stats.size(a).cmp(&stats.size(b))),
         SortOrder::NameAsc => {
-            children.sort_by_cached_key(|&c| {
-                tree.get(c)
-                    .map(|n| n.name.to_lowercase())
-                    .unwrap_or_default()
-            });
+            children.sort_by_cached_key(|&c| tree.name(c).to_lowercase());
         }
         SortOrder::NameDesc => {
-            children.sort_by_cached_key(|&c| {
-                Reverse(
-                    tree.get(c)
-                        .map(|n| n.name.to_lowercase())
-                        .unwrap_or_default(),
-                )
-            });
+            children.sort_by_cached_key(|&c| Reverse(tree.name(c).to_lowercase()));
         }
     }
     children
@@ -155,7 +145,8 @@ pub(crate) fn sorted_children(
 fn expand_ancestors(tree: &DirTree, state: &mut TreeViewState, index: usize) {
     let mut current = index;
     while let Some(node) = tree.get(current) {
-        if let Some(parent) = node.parent {
+        if node.parent != rds_core::tree::NO_PARENT {
+            let parent = node.parent as usize;
             state.expand(parent);
             current = parent;
         } else {
@@ -229,8 +220,8 @@ fn render_node(
         None => return,
     };
 
-    let is_dir = node.is_dir;
-    let has_children = !tree.children(index).is_empty();
+    let is_dir = node.is_dir();
+    let has_children = tree.get(index).is_some_and(|n| n.first_child != u32::MAX);
     let is_expanded = is_dir && has_children && state.is_expanded(index);
     let is_selected = *selected == Some(index);
 
@@ -252,15 +243,15 @@ fn render_node(
 
         // Build label: name + size + file count (dirs only).
         let size = stats.size(index);
+        let name = tree.name(index);
         let is_empty_dir = is_dir
             && tree
                 .children(index)
-                .iter()
-                .all(|&c| tree.get(c).is_none_or(|n| n.deleted));
+                .all(|c| tree.get(c as usize).is_none_or(|n| n.deleted()));
         let display_name = if is_empty_dir {
-            format!("{} (empty)", node.name)
+            format!("{} (empty)", name)
         } else {
-            node.name.clone()
+            name.to_string()
         };
         let label_text = if is_dir {
             let count = stats.file_count(index);
@@ -271,7 +262,7 @@ fn render_node(
                 count,
             )
         } else {
-            format!("{}  {}", node.name, super::format_bytes(size))
+            format!("{}  {}", name, super::format_bytes(size))
         };
 
         let rich_label = if is_empty_dir {
@@ -353,38 +344,40 @@ fn render_node(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use rds_core::tree::FileNode;
+    use rds_core::tree::{FileNode, NO_PARENT};
 
-    fn make_file(name: &str, size: u64) -> FileNode {
+    fn make_file(size: u64) -> FileNode {
         FileNode {
-            name: name.to_string(),
+            name_offset: 0,
+            name_len: 0,
             size,
-            is_dir: false,
-            children: Vec::new(),
-            parent: None,
-            extension: None,
-            modified: None,
-            deleted: false,
+            first_child: u32::MAX,
+            next_sibling: u32::MAX,
+            modified: 0,
+            parent: NO_PARENT,
+            extension: 0,
+            flags: 0,
         }
     }
 
-    fn make_dir(name: &str) -> FileNode {
+    fn make_dir() -> FileNode {
         FileNode {
-            name: name.to_string(),
+            name_offset: 0,
+            name_len: 0,
             size: 0,
-            is_dir: true,
-            children: Vec::new(),
-            parent: None,
-            extension: None,
-            modified: None,
-            deleted: false,
+            first_child: u32::MAX,
+            next_sibling: u32::MAX,
+            modified: 0,
+            parent: NO_PARENT,
+            extension: 0,
+            flags: 1,
         }
     }
 
     #[test]
     fn subtree_stats_single_file() {
         let mut tree = DirTree::new("/root");
-        tree.insert(0, make_file("a.txt", 100));
+        tree.insert(0, make_file(100), "a.txt");
 
         let stats = SubtreeStats::compute(&tree);
         assert_eq!(stats.size(0), 100);
@@ -396,10 +389,10 @@ mod tests {
     #[test]
     fn subtree_stats_nested_dirs() {
         let mut tree = DirTree::new("/root");
-        let sub = tree.insert(0, make_dir("sub"));
-        tree.insert(sub, make_file("a.txt", 100));
-        tree.insert(sub, make_file("b.txt", 200));
-        tree.insert(0, make_file("c.txt", 50));
+        let sub = tree.insert(0, make_dir(), "sub");
+        tree.insert(sub, make_file(100), "a.txt");
+        tree.insert(sub, make_file(200), "b.txt");
+        tree.insert(0, make_file(50), "c.txt");
 
         let stats = SubtreeStats::compute(&tree);
         assert_eq!(stats.size(0), 350);
@@ -413,10 +406,10 @@ mod tests {
     #[test]
     fn subtree_stats_agrees_with_tree_method() {
         let mut tree = DirTree::new("/root");
-        let sub = tree.insert(0, make_dir("sub"));
-        tree.insert(sub, make_file("a.txt", 100));
-        tree.insert(sub, make_file("b.txt", 200));
-        tree.insert(0, make_file("c.txt", 50));
+        let sub = tree.insert(0, make_dir(), "sub");
+        tree.insert(sub, make_file(100), "a.txt");
+        tree.insert(sub, make_file(200), "b.txt");
+        tree.insert(0, make_file(50), "c.txt");
 
         let stats = SubtreeStats::compute(&tree);
         for i in 0..tree.len() {
@@ -471,9 +464,9 @@ mod tests {
     #[test]
     fn sorted_children_by_size_descending() {
         let mut tree = DirTree::new("/root");
-        tree.insert(0, make_file("small.txt", 10)); // index 1
-        tree.insert(0, make_file("big.txt", 1000)); // index 2
-        tree.insert(0, make_file("medium.txt", 500)); // index 3
+        tree.insert(0, make_file(10), "small.txt"); // index 1
+        tree.insert(0, make_file(1000), "big.txt"); // index 2
+        tree.insert(0, make_file(500), "medium.txt"); // index 3
 
         let stats = SubtreeStats::compute(&tree);
         let sorted = sorted_children(&tree, 0, &stats, SortOrder::SizeDesc);
@@ -483,10 +476,10 @@ mod tests {
     #[test]
     fn sorted_children_dirs_sorted_by_subtree_size() {
         let mut tree = DirTree::new("/root");
-        let small_dir = tree.insert(0, make_dir("small_dir")); // index 1
-        tree.insert(small_dir, make_file("s.txt", 10)); // index 2
-        let big_dir = tree.insert(0, make_dir("big_dir")); // index 3
-        tree.insert(big_dir, make_file("b.txt", 1000)); // index 4
+        let small_dir = tree.insert(0, make_dir(), "small_dir"); // index 1
+        tree.insert(small_dir, make_file(10), "s.txt"); // index 2
+        let big_dir = tree.insert(0, make_dir(), "big_dir"); // index 3
+        tree.insert(big_dir, make_file(1000), "b.txt"); // index 4
 
         let stats = SubtreeStats::compute(&tree);
         let sorted = sorted_children(&tree, 0, &stats, SortOrder::SizeDesc);
@@ -504,10 +497,10 @@ mod tests {
     #[test]
     fn expand_ancestors_deep_node() {
         let mut tree = DirTree::new("/root");
-        let d1 = tree.insert(0, make_dir("d1"));
-        let d2 = tree.insert(d1, make_dir("d2"));
-        let d3 = tree.insert(d2, make_dir("d3"));
-        let file = tree.insert(d3, make_file("deep.txt", 100));
+        let d1 = tree.insert(0, make_dir(), "d1");
+        let d2 = tree.insert(d1, make_dir(), "d2");
+        let d3 = tree.insert(d2, make_dir(), "d3");
+        let file = tree.insert(d3, make_file(100), "deep.txt");
 
         let mut state = TreeViewState::new();
         expand_ancestors(&tree, &mut state, file);
@@ -530,7 +523,7 @@ mod tests {
     #[test]
     fn expand_ancestors_direct_child_of_root() {
         let mut tree = DirTree::new("/root");
-        let file = tree.insert(0, make_file("a.txt", 100));
+        let file = tree.insert(0, make_file(100), "a.txt");
 
         let mut state = TreeViewState::new();
         expand_ancestors(&tree, &mut state, file);
@@ -542,8 +535,8 @@ mod tests {
     #[test]
     fn expand_ancestors_idempotent() {
         let mut tree = DirTree::new("/root");
-        let d1 = tree.insert(0, make_dir("d1"));
-        let file = tree.insert(d1, make_file("a.txt", 100));
+        let d1 = tree.insert(0, make_dir(), "d1");
+        let file = tree.insert(d1, make_file(100), "a.txt");
 
         let mut state = TreeViewState::new();
         expand_ancestors(&tree, &mut state, file);
@@ -556,10 +549,10 @@ mod tests {
     #[test]
     fn subtree_stats_excludes_deleted_file() {
         let mut tree = DirTree::new("/root");
-        let sub = tree.insert(0, make_dir("sub"));
-        let a = tree.insert(sub, make_file("a.txt", 100));
-        tree.insert(sub, make_file("b.txt", 200));
-        tree.insert(0, make_file("c.txt", 50));
+        let sub = tree.insert(0, make_dir(), "sub");
+        let a = tree.insert(sub, make_file(100), "a.txt");
+        tree.insert(sub, make_file(200), "b.txt");
+        tree.insert(0, make_file(50), "c.txt");
 
         // Before tombstone: root = 350 bytes, 3 files; sub = 300 bytes, 2 files.
         let stats = SubtreeStats::compute(&tree);
@@ -589,10 +582,10 @@ mod tests {
     #[test]
     fn subtree_stats_excludes_deleted_directory() {
         let mut tree = DirTree::new("/root");
-        let sub = tree.insert(0, make_dir("sub"));
-        tree.insert(sub, make_file("a.txt", 100));
-        tree.insert(sub, make_file("b.txt", 200));
-        tree.insert(0, make_file("c.txt", 50));
+        let sub = tree.insert(0, make_dir(), "sub");
+        tree.insert(sub, make_file(100), "a.txt");
+        tree.insert(sub, make_file(200), "b.txt");
+        tree.insert(0, make_file(50), "c.txt");
 
         // Tombstone entire subdirectory (sub + a.txt + b.txt).
         tree.tombstone(sub);
@@ -611,9 +604,9 @@ mod tests {
     #[test]
     fn sorted_children_excludes_deleted() {
         let mut tree = DirTree::new("/root");
-        let small = tree.insert(0, make_file("small.txt", 10));
-        tree.insert(0, make_file("big.txt", 1000));
-        tree.insert(0, make_file("medium.txt", 500));
+        let small = tree.insert(0, make_file(10), "small.txt");
+        tree.insert(0, make_file(1000), "big.txt");
+        tree.insert(0, make_file(500), "medium.txt");
 
         // Tombstone the small file.
         tree.tombstone(small);
@@ -626,27 +619,16 @@ mod tests {
 
     #[test]
     fn stats_recompute_after_tombstone_directory_reflects_decreased_totals() {
-        // Build tree:
-        //   /root
-        //   ├── dir_a/         (contains 300 bytes across 2 files)
-        //   │   ├── a1.txt  100
-        //   │   └── a2.txt  200
-        //   ├── dir_b/         (contains 750 bytes across 3 files)
-        //   │   ├── b1.txt  250
-        //   │   ├── b2.txt  250
-        //   │   └── b3.txt  250
-        //   └── top.txt      50
         let mut tree = DirTree::new("/root");
-        let dir_a = tree.insert(0, make_dir("dir_a"));
-        tree.insert(dir_a, make_file("a1.txt", 100));
-        tree.insert(dir_a, make_file("a2.txt", 200));
-        let dir_b = tree.insert(0, make_dir("dir_b"));
-        tree.insert(dir_b, make_file("b1.txt", 250));
-        tree.insert(dir_b, make_file("b2.txt", 250));
-        tree.insert(dir_b, make_file("b3.txt", 250));
-        tree.insert(0, make_file("top.txt", 50));
+        let dir_a = tree.insert(0, make_dir(), "dir_a");
+        tree.insert(dir_a, make_file(100), "a1.txt");
+        tree.insert(dir_a, make_file(200), "a2.txt");
+        let dir_b = tree.insert(0, make_dir(), "dir_b");
+        tree.insert(dir_b, make_file(250), "b1.txt");
+        tree.insert(dir_b, make_file(250), "b2.txt");
+        tree.insert(dir_b, make_file(250), "b3.txt");
+        tree.insert(0, make_file(50), "top.txt");
 
-        // Before: root = 1100 bytes, 6 files.
         let stats_before = SubtreeStats::compute(&tree);
         assert_eq!(stats_before.size(0), 1100);
         assert_eq!(stats_before.file_count(0), 6);
@@ -655,68 +637,38 @@ mod tests {
         assert_eq!(stats_before.size(dir_b), 750);
         assert_eq!(stats_before.file_count(dir_b), 3);
 
-        // Tombstone dir_a (removes 300 bytes and 2 files).
         tree.tombstone(dir_a);
 
         let stats_after = SubtreeStats::compute(&tree);
-        assert_eq!(
-            stats_after.size(0),
-            800,
-            "root size should decrease by tombstoned subtree (300)"
-        );
-        assert_eq!(
-            stats_after.file_count(0),
-            4,
-            "root file count should decrease by tombstoned files (2)"
-        );
-        // dir_b and top.txt remain unchanged.
+        assert_eq!(stats_after.size(0), 800);
+        assert_eq!(stats_after.file_count(0), 4);
         assert_eq!(stats_after.size(dir_b), 750);
         assert_eq!(stats_after.file_count(dir_b), 3);
-        // dir_a itself reports 0.
         assert_eq!(stats_after.size(dir_a), 0);
         assert_eq!(stats_after.file_count(dir_a), 0);
     }
 
     #[test]
     fn stats_tombstone_all_children_yields_zero_size_and_count() {
-        // Build tree:
-        //   /root
-        //   └── parent_dir/
-        //       ├── child1.txt  400
-        //       ├── child2.txt  600
-        //       └── sub/
-        //           └── deep.txt  1000
         let mut tree = DirTree::new("/root");
-        let parent_dir = tree.insert(0, make_dir("parent_dir"));
-        let child1 = tree.insert(parent_dir, make_file("child1.txt", 400));
-        let child2 = tree.insert(parent_dir, make_file("child2.txt", 600));
-        let sub = tree.insert(parent_dir, make_dir("sub"));
-        tree.insert(sub, make_file("deep.txt", 1000));
+        let parent_dir = tree.insert(0, make_dir(), "parent_dir");
+        let child1 = tree.insert(parent_dir, make_file(400), "child1.txt");
+        let child2 = tree.insert(parent_dir, make_file(600), "child2.txt");
+        let sub = tree.insert(parent_dir, make_dir(), "sub");
+        tree.insert(sub, make_file(1000), "deep.txt");
 
-        // Before: parent_dir = 2000 bytes, 3 files.
         let stats_before = SubtreeStats::compute(&tree);
         assert_eq!(stats_before.size(parent_dir), 2000);
         assert_eq!(stats_before.file_count(parent_dir), 3);
 
-        // Tombstone all children of parent_dir one by one.
         tree.tombstone(child1);
         tree.tombstone(child2);
-        tree.tombstone(sub); // also removes deep.txt
+        tree.tombstone(sub);
 
         let stats_after = SubtreeStats::compute(&tree);
-        assert_eq!(
-            stats_after.size(parent_dir),
-            0,
-            "directory with all children tombstoned should show 0 size"
-        );
-        assert_eq!(
-            stats_after.file_count(parent_dir),
-            0,
-            "directory with all children tombstoned should show 0 file count"
-        );
-        // parent_dir itself is not deleted — it just has no live children.
-        assert!(!tree.get(parent_dir).unwrap().deleted);
-        // Root stats also reflect the change.
+        assert_eq!(stats_after.size(parent_dir), 0);
+        assert_eq!(stats_after.file_count(parent_dir), 0);
+        assert!(!tree.get(parent_dir).unwrap().deleted());
         assert_eq!(stats_after.size(0), 0);
         assert_eq!(stats_after.file_count(0), 0);
     }

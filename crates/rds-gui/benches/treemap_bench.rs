@@ -1,30 +1,32 @@
 use criterion::{BenchmarkId, Criterion, criterion_group, criterion_main};
-use rds_core::tree::{DirTree, FileNode};
+use rds_core::tree::{DirTree, FileNode, NO_PARENT};
 use rds_gui::{SubtreeStats, TreemapLayout};
 
-fn make_file(name: &str, size: u64, ext: Option<&str>) -> FileNode {
+fn make_file(size: u64) -> FileNode {
     FileNode {
-        name: name.to_string(),
+        name_offset: 0,
+        name_len: 0,
         size,
-        is_dir: false,
-        children: Vec::new(),
-        parent: None,
-        extension: ext.map(|e| e.to_string()),
-        modified: None,
-        deleted: false,
+        first_child: u32::MAX,
+        next_sibling: u32::MAX,
+        modified: 0,
+        parent: NO_PARENT,
+        extension: 0,
+        flags: 0,
     }
 }
 
-fn make_dir(name: &str) -> FileNode {
+fn make_dir() -> FileNode {
     FileNode {
-        name: name.to_string(),
+        name_offset: 0,
+        name_len: 0,
         size: 0,
-        is_dir: true,
-        children: Vec::new(),
-        parent: None,
-        extension: None,
-        modified: None,
-        deleted: false,
+        first_child: u32::MAX,
+        next_sibling: u32::MAX,
+        modified: 0,
+        parent: NO_PARENT,
+        extension: 0,
+        flags: 1,
     }
 }
 
@@ -41,7 +43,8 @@ fn build_tree(node_count: usize) -> DirTree {
     // Create directories as children of root.
     let mut dir_indices = Vec::with_capacity(dir_count);
     for i in 0..dir_count {
-        let idx = tree.insert(0, make_dir(&format!("dir_{i}")));
+        let dir_name = format!("dir_{i}");
+        let idx = tree.insert(0, make_dir(), &dir_name);
         dir_indices.push(idx);
     }
 
@@ -50,10 +53,11 @@ fn build_tree(node_count: usize) -> DirTree {
         let parent = dir_indices[i % dir_count];
         let ext = extensions[i % extensions.len()];
         let size = ((i as u64 % 10_000) + 1) * 1024;
-        tree.insert(
-            parent,
-            make_file(&format!("file_{i}.{ext}"), size, Some(ext)),
-        );
+        let ext_idx = tree.intern_extension(Some(ext));
+        let name = format!("file_{i}.{ext}");
+        let mut node = make_file(size);
+        node.extension = ext_idx;
+        tree.insert(parent, node, &name);
     }
 
     tree

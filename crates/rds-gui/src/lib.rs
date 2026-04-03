@@ -114,6 +114,8 @@ pub struct RustDirStatApp {
     /// Extension filter: when set, treemap dims files not matching this extension.
     /// Set by clicking in ext stats panel, independent of `selected_node`. (ref: DL-001)
     selected_extension: Option<String>,
+    /// Cached treemap GPU mesh. Rebuilt when layout or extension filter changes.
+    treemap_mesh_cache: Option<treemap::TreemapMeshCache>,
     /// Root node index for treemap drill-down. Defaults to `tree.root()` (0).
     /// Changed by double-click in treemap, navigated via breadcrumb. (ref: DL-006)
     treemap_root: usize,
@@ -210,9 +212,10 @@ impl RustDirStatApp {
             subtree_stats: None,
             treemap_layout: None,
             selected_extension: None,
+            treemap_mesh_cache: None,
             treemap_root: 0,
             duplicate_groups: Vec::new(),
-            hash_duplicates_enabled: true,
+            hash_duplicates_enabled: false,
             detecting_duplicates: false,
             pending_delete: None,
             freed_bytes: 0,
@@ -278,6 +281,7 @@ impl RustDirStatApp {
         self.selected_node = None;
         self.subtree_stats = None;
         self.treemap_layout = None;
+        self.treemap_mesh_cache = None;
         self.selected_extension = None;
         self.treemap_root = 0;
         self.duplicate_groups = Vec::new();
@@ -325,7 +329,8 @@ impl RustDirStatApp {
         self.detecting_duplicates = false;
         self.duplicate_groups
             .sort_by(|a, b| b.wasted_bytes.cmp(&a.wasted_bytes));
-        if let Some(ref tree) = self.tree {
+        if let Some(ref mut tree) = self.tree {
+            tree.shrink_to_fit();
             self.extension_stats = Some(rds_core::stats::compute_extension_stats(tree));
         }
         self.receiver = None;
@@ -340,6 +345,7 @@ impl RustDirStatApp {
             self.tree_view_state.expand(tree.root());
         }
         self.treemap_layout = None;
+        self.treemap_mesh_cache = None;
     }
 
     /// Drains up to `DRAIN_BATCH_SIZE` ScanEvent values from the channel per frame.
@@ -357,18 +363,26 @@ impl RustDirStatApp {
 
         for _ in 0..Self::DRAIN_BATCH_SIZE {
             match rx.try_recv() {
-                Ok(ScanEvent::NodeDiscovered { node, parent_index }) => {
+                Ok(ScanEvent::NodeDiscovered {
+                    node,
+                    parent_index,
+                    extension_name,
+                    node_name,
+                }) => {
                     match parent_index {
                         None => {
                             // First event: create the tree with root node.
                             self.tree = Some(DirTree::from_root_with_capacity(
                                 node,
+                                &node_name,
                                 self.tree_capacity_hint,
                             ));
                         }
                         Some(pidx) => {
                             if let Some(ref mut t) = self.tree {
-                                t.insert(pidx, node);
+                                let mut node = node;
+                                node.extension = t.intern_extension(extension_name.as_deref());
+                                t.insert(pidx, node, &node_name);
                             }
                         }
                     }
@@ -462,6 +476,7 @@ impl RustDirStatApp {
         self.subtree_stats = Some(tree_view::SubtreeStats::compute(tree));
         self.extension_stats = Some(rds_core::stats::compute_extension_stats(tree));
         self.treemap_layout = None;
+        self.treemap_mesh_cache = None;
         self.tree_view_state.expand(tree.root());
         self.last_live_recompute = Some(now);
         self.live_node_count = current_count;
@@ -492,6 +507,7 @@ impl RustDirStatApp {
                 self.subtree_stats = Some(tree_view::SubtreeStats::compute(tree_ref));
                 self.extension_stats = Some(rds_core::stats::compute_extension_stats(tree_ref));
                 self.treemap_layout = None;
+                self.treemap_mesh_cache = None;
 
                 // Clear selection if it pointed at a now-deleted node (the target
                 // or any of its descendants).
@@ -501,7 +517,7 @@ impl RustDirStatApp {
                         .as_ref()
                         .unwrap()
                         .get(sel)
-                        .is_some_and(|n| n.deleted)
+                        .is_some_and(|n| n.deleted())
                 {
                     self.selected_node = None;
                 }
@@ -513,7 +529,7 @@ impl RustDirStatApp {
                     .as_ref()
                     .unwrap()
                     .get(self.treemap_root)
-                    .is_some_and(|n| n.deleted)
+                    .is_some_and(|n| n.deleted())
                 {
                     self.treemap_root = self.tree.as_ref().unwrap().root();
                 }
@@ -662,10 +678,11 @@ impl eframe::App for RustDirStatApp {
             && let Some(ref tree) = self.tree
             && self.treemap_root != tree.root()
             && let Some(node) = tree.get(self.treemap_root)
-            && let Some(parent) = node.parent
+            && node.parent != rds_core::tree::NO_PARENT
         {
-            self.treemap_root = parent;
+            self.treemap_root = node.parent as usize;
             self.treemap_layout = None;
+            self.treemap_mesh_cache = None;
         }
 
         // --- Max-nodes limit dialog ---
@@ -961,9 +978,87 @@ impl eframe::App for RustDirStatApp {
                 });
         }
 
-        // --- Left panel: directory tree (MS6) ---
+        // --- Bottom panel: treemap (WinDirStat layout) ---
+        // Rendered before side panels so it claims the bottom half.
+        // Tree and extensions share the remaining top half.
+        egui::TopBottomPanel::bottom("treemap_panel")
+            .resizable(true)
+            .default_height(300.0)
+            .show(ctx, |ui| {
+                // Paint dark background over the entire panel (including frame margins)
+                // so no default grey leaks through gaps in the treemap.
+                ui.painter()
+                    .rect_filled(ui.max_rect(), 0.0, egui::Color32::from_rgb(30, 30, 30));
+
+                if let (Some(tree), Some(stats)) = (self.tree.as_ref(), self.subtree_stats.as_ref())
+                {
+                    // Breadcrumb navigation — only visible when drilled in.
+                    if self.treemap_root != tree.root() {
+                        ui.horizontal(|ui| {
+                            let chain = treemap::breadcrumb_chain(tree, self.treemap_root);
+                            for (i, (idx, name)) in chain.iter().enumerate() {
+                                if i > 0 {
+                                    ui.label("\u{203A}"); // › separator
+                                }
+                                if *idx == self.treemap_root {
+                                    ui.strong(name);
+                                } else if ui.link(name).clicked() {
+                                    self.treemap_root = *idx;
+                                    self.treemap_layout = None;
+                                    self.treemap_mesh_cache = None;
+                                }
+                            }
+                        });
+                        ui.separator();
+                    }
+
+                    // Recompute layout if panel size or root changed.
+                    let available_size = ui.available_size();
+                    let needs_recompute = self.treemap_layout.as_ref().is_none_or(|l| {
+                        l.last_root != self.treemap_root
+                            || (l.last_size.x - available_size.x).abs() > 0.5
+                            || (l.last_size.y - available_size.y).abs() > 0.5
+                    });
+
+                    if needs_recompute {
+                        self.treemap_layout = Some(treemap::TreemapLayout::compute(
+                            tree,
+                            stats,
+                            available_size,
+                            self.treemap_root,
+                        ));
+                    }
+
+                    if let Some(layout) = self.treemap_layout.as_ref() {
+                        let prev_root = self.treemap_root;
+                        treemap::show(
+                            layout,
+                            tree,
+                            &mut self.selected_node,
+                            &self.selected_extension,
+                            &mut self.treemap_root,
+                            scan_complete,
+                            &mut self.pending_delete,
+                            &self.custom_commands,
+                            &mut self.notifications,
+                            &mut self.treemap_mesh_cache,
+                            ui,
+                        );
+                        if self.treemap_root != prev_root {
+                            self.treemap_layout = None;
+                            self.treemap_mesh_cache = None;
+                        }
+                    }
+                } else if matches!(self.phase, ScanPhase::Scanning) {
+                    ui.colored_label(egui::Color32::GRAY, "Scan in progress\u{2026}");
+                } else {
+                    ui.colored_label(egui::Color32::GRAY, "No scan data.");
+                }
+            });
+
+        // --- Left panel: directory tree (top-left) ---
         egui::SidePanel::left("tree_panel")
-            .default_width(250.0)
+            .default_width(ctx.available_rect().width() * 0.5)
             .show(ctx, |ui| {
                 ui.heading("Directory Tree");
                 ui.separator();
@@ -991,92 +1086,20 @@ impl eframe::App for RustDirStatApp {
                 }
             });
 
-        // --- Right panel: extension statistics (MS7) ---
-        egui::SidePanel::right("ext_stats_panel")
-            .default_width(220.0)
-            .show(ctx, |ui| {
-                ui.heading("Extensions");
-                ui.separator();
-                match &self.extension_stats {
-                    Some(stats) => {
-                        ext_stats::show(stats, &mut self.selected_extension, ui);
-                    }
-                    None => {
-                        if self.tree.is_some() {
-                            ui.label(format!("{} files scanned", self.files_scanned));
-                        } else {
-                            ui.colored_label(egui::Color32::GRAY, "No scan data.");
-                        }
-                    }
-                }
-            });
-
-        // --- Central panel: treemap (MS8) + breadcrumb (MS10) ---
+        // --- Central panel: extension statistics (top-right) ---
         egui::CentralPanel::default().show(ctx, |ui| {
-            if let (Some(tree), Some(stats)) = (self.tree.as_ref(), self.subtree_stats.as_ref()) {
-                // Breadcrumb navigation — only visible when drilled in. (ref: DL-007)
-                if self.treemap_root != tree.root() {
-                    ui.horizontal(|ui| {
-                        let chain = treemap::breadcrumb_chain(tree, self.treemap_root);
-                        for (i, (idx, name)) in chain.iter().enumerate() {
-                            if i > 0 {
-                                ui.label("\u{203A}"); // › separator
-                            }
-                            if *idx == self.treemap_root {
-                                // Current directory: non-clickable label.
-                                ui.strong(name);
-                            } else if ui.link(name).clicked() {
-                                self.treemap_root = *idx;
-                                self.treemap_layout = None;
-                            }
-                        }
-                    });
-                    ui.separator();
+            ui.heading("Extensions");
+            ui.separator();
+            match &self.extension_stats {
+                Some(stats) => {
+                    ext_stats::show(stats, &mut self.selected_extension, ui);
                 }
-
-                // Recompute layout if panel size or root changed. (ref: MS8 DL-005, MS10 DL-009)
-                let available_size = ui.available_size();
-                let needs_recompute = self.treemap_layout.as_ref().is_none_or(|l| {
-                    l.last_root != self.treemap_root
-                        || (l.last_size.x - available_size.x).abs() > 1.0
-                        || (l.last_size.y - available_size.y).abs() > 1.0
-                });
-
-                if needs_recompute {
-                    self.treemap_layout = Some(treemap::TreemapLayout::compute(
-                        tree,
-                        stats,
-                        available_size,
-                        self.treemap_root,
-                    ));
-                }
-
-                if let Some(layout) = self.treemap_layout.as_ref() {
-                    let prev_root = self.treemap_root;
-                    treemap::show(
-                        layout,
-                        tree,
-                        &mut self.selected_node,
-                        &self.selected_extension,
-                        &mut self.treemap_root,
-                        scan_complete,
-                        &mut self.pending_delete,
-                        &self.custom_commands,
-                        &mut self.notifications,
-                        ui,
-                    );
-                    // Invalidate layout if drill-down changed the root.
-                    if self.treemap_root != prev_root {
-                        self.treemap_layout = None;
+                None => {
+                    if self.tree.is_some() {
+                        ui.label(format!("{} files scanned", self.files_scanned));
+                    } else {
+                        ui.colored_label(egui::Color32::GRAY, "No scan data.");
                     }
-                }
-            } else {
-                ui.heading("Treemap");
-                ui.separator();
-                if matches!(self.phase, ScanPhase::Scanning) {
-                    ui.colored_label(egui::Color32::GRAY, "Scan in progress\u{2026}");
-                } else {
-                    ui.colored_label(egui::Color32::GRAY, "No scan data.");
                 }
             }
         });
@@ -1111,7 +1134,7 @@ mod tests {
         assert!(app.selected_extension.is_none());
         assert_eq!(app.treemap_root, 0);
         assert!(app.duplicate_groups.is_empty());
-        assert!(app.hash_duplicates_enabled);
+        assert!(!app.hash_duplicates_enabled);
         assert!(!app.detecting_duplicates);
         assert!(app.pending_delete.is_none());
         assert_eq!(app.freed_bytes, 0);

@@ -189,6 +189,19 @@ pub struct TreemapLayout {
     pub last_root: usize,
 }
 
+/// Cached GPU mesh for the treemap, built from layout + extension filter.
+/// Avoids rebuilding millions of cushion-shaded vertices every frame.
+pub struct TreemapMeshCache {
+    /// Pre-built cushion mesh wrapped in Arc for cheap per-frame cloning.
+    pub mesh: std::sync::Arc<egui::Mesh>,
+    /// Flat-fill rects for tiny rectangles.
+    pub flat_rects: Vec<(egui::Rect, egui::Color32)>,
+    /// The extension filter this mesh was built with.
+    pub extension_filter: Option<String>,
+    /// The screen offset this mesh was built with.
+    pub offset: egui::Vec2,
+}
+
 impl TreemapLayout {
     pub fn compute(
         tree: &DirTree,
@@ -241,10 +254,10 @@ fn compute_recursive(
         return;
     }
 
-    let child_indices = tree.children(dir_index);
-    let mut items: Vec<LayoutItem> = child_indices
-        .iter()
-        .filter_map(|&idx| {
+    let mut items: Vec<LayoutItem> = tree
+        .children(dir_index)
+        .filter_map(|idx| {
+            let idx = idx as usize;
             let size = stats.size(idx) as f32;
             if size > 0.0 {
                 Some(LayoutItem {
@@ -313,7 +326,7 @@ fn compute_recursive(
         let mut child_cushion = parent_cushion;
         child_cushion.add_ridge(&item.rect, height);
 
-        if node.is_dir {
+        if node.is_dir() {
             compute_recursive(
                 tree,
                 stats,
@@ -326,7 +339,7 @@ fn compute_recursive(
                 rect_count,
             );
         } else {
-            let ext = node.extension.as_deref().unwrap_or("");
+            let ext = tree.extension_str(node.extension).unwrap_or("");
             let color = ext_stats::hsl_to_color32(&rds_core::stats::color_for_extension(ext));
             result.push(TreemapRect {
                 node_index: item.node_index,
@@ -392,9 +405,12 @@ pub(crate) fn find_drill_target(
     let mut current = file_idx;
     loop {
         let node = tree.get(current)?;
-        let parent = node.parent?;
+        if node.parent == rds_core::tree::NO_PARENT {
+            return None;
+        }
+        let parent = node.parent as usize;
         if parent == current_root {
-            if tree.get(current)?.is_dir {
+            if tree.get(current)?.is_dir() {
                 return Some(current);
             } else {
                 return None;
@@ -412,11 +428,11 @@ pub(crate) fn breadcrumb_chain(tree: &DirTree, treemap_root: usize) -> Vec<(usiz
     let mut chain = Vec::new();
     let mut current = treemap_root;
     while let Some(node) = tree.get(current) {
-        chain.push((current, node.name.clone()));
-        match node.parent {
-            Some(parent) => current = parent,
-            None => break,
+        chain.push((current, tree.name(current).to_string()));
+        if node.parent == rds_core::tree::NO_PARENT {
+            break;
         }
+        current = node.parent as usize;
     }
     chain.reverse();
     chain
@@ -427,26 +443,13 @@ pub(crate) fn breadcrumb_chain(tree: &DirTree, treemap_root: usize) -> Vec<(usiz
 ///
 /// Large rectangles (>= MIN_CUSHION_DIM) get cushion-shaded mesh rendering.
 /// Small rectangles get flat fills. Both use the 0.5px inset for visual
-/// separation. (ref: DL-002, DL-005, DL-006, DL-007, DL-008, DL-009)
-#[allow(clippy::too_many_arguments)]
-pub(crate) fn show(
+/// Builds the cached treemap mesh from a layout + tree + extension filter.
+pub(crate) fn build_mesh_cache(
     layout: &TreemapLayout,
     tree: &DirTree,
-    selected: &mut Option<usize>,
     highlighted_extension: &Option<String>,
-    treemap_root: &mut usize,
-    scan_complete: bool,
-    pending_delete: &mut Option<PendingDelete>,
-    custom_commands: &[CustomCommand],
-    notifications: &mut crate::notifications::Notifications,
-    ui: &mut egui::Ui,
-) {
-    let (response, painter) = ui.allocate_painter(layout.last_size, egui::Sense::click());
-    let offset = response.rect.min.to_vec2();
-
-    // Helper: dim a color to 30% brightness when extension filter is active
-    // and the node doesn't match. Aggregated "other" rects keep their neutral
-    // gray to remain visible as landmarks. (ref: DL-002)
+    offset: egui::Vec2,
+) -> TreemapMeshCache {
     let effective_color = |rect_info: &TreemapRect| -> egui::Color32 {
         if rect_info.node_index == usize::MAX {
             return rect_info.color;
@@ -454,7 +457,7 @@ pub(crate) fn show(
         if let Some(ext) = highlighted_extension {
             let matches = tree
                 .get(rect_info.node_index)
-                .is_some_and(|n| n.extension.as_deref().unwrap_or("") == ext.as_str());
+                .is_some_and(|n| tree.extension_str(n.extension).unwrap_or("") == ext.as_str());
             if matches {
                 rect_info.color
             } else {
@@ -471,8 +474,8 @@ pub(crate) fn show(
         }
     };
 
-    // Build a single shared mesh for all cushion-shaded rects. (ref: DL-006)
-    let mut cushion_mesh = egui::Mesh::default();
+    let mut mesh = egui::Mesh::default();
+    let mut flat_rects = Vec::new();
 
     for rect_info in &layout.rects {
         let color = effective_color(rect_info);
@@ -480,24 +483,68 @@ pub(crate) fn show(
         let h = rect_info.rect.height();
 
         if w >= MIN_CUSHION_DIM && h >= MIN_CUSHION_DIM {
-            // Cushion shading via mesh. (ref: DL-002, DL-005)
             build_cushion_mesh(
-                &mut cushion_mesh,
+                &mut mesh,
                 rect_info.rect.shrink(0.5),
                 offset,
                 &rect_info.cushion,
                 color,
             );
         } else {
-            // Flat fill for tiny rects. (ref: DL-005)
-            let abs_rect = rect_info.rect.translate(offset);
-            painter.rect_filled(abs_rect.shrink(0.5), 0.0, color);
+            flat_rects.push((rect_info.rect.shrink(0.5).translate(offset), color));
         }
     }
 
-    // Add the combined cushion mesh as a single shape. (ref: DL-006)
-    if !cushion_mesh.vertices.is_empty() {
-        painter.add(egui::Shape::Mesh(cushion_mesh.into()));
+    TreemapMeshCache {
+        mesh: std::sync::Arc::new(mesh),
+        flat_rects,
+        extension_filter: highlighted_extension.clone(),
+        offset,
+    }
+}
+
+/// separation. (ref: DL-002, DL-005, DL-006, DL-007, DL-008, DL-009)
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn show(
+    layout: &TreemapLayout,
+    tree: &DirTree,
+    selected: &mut Option<usize>,
+    highlighted_extension: &Option<String>,
+    treemap_root: &mut usize,
+    scan_complete: bool,
+    pending_delete: &mut Option<PendingDelete>,
+    custom_commands: &[CustomCommand],
+    notifications: &mut crate::notifications::Notifications,
+    mesh_cache: &mut Option<TreemapMeshCache>,
+    ui: &mut egui::Ui,
+) {
+    // Allocate exactly the layout size for correct rect positioning.
+    // The dark background is painted by the parent panel on ui.max_rect().
+    let (response, painter) = ui.allocate_painter(ui.available_size(), egui::Sense::click());
+    let offset = response.rect.min.to_vec2();
+
+    // Rebuild mesh cache if stale (extension filter or offset changed).
+    let needs_rebuild = mesh_cache.as_ref().is_none_or(|c| {
+        c.extension_filter != *highlighted_extension
+            || (c.offset.x - offset.x).abs() > 0.5
+            || (c.offset.y - offset.y).abs() > 0.5
+    });
+    if needs_rebuild {
+        *mesh_cache = Some(build_mesh_cache(
+            layout,
+            tree,
+            highlighted_extension,
+            offset,
+        ));
+    }
+    let cache = mesh_cache.as_ref().unwrap();
+
+    // Paint the cached mesh and flat rects. Arc clone is O(1).
+    if !cache.mesh.vertices.is_empty() {
+        painter.add(egui::Shape::Mesh(cache.mesh.clone()));
+    }
+    for &(rect, color) in &cache.flat_rects {
+        painter.rect_filled(rect, 0.0, color);
     }
 
     // Highlight selected node with a white border. (ref: MS8 DL-008)
@@ -584,7 +631,7 @@ pub(crate) fn show(
                     if ui.button("Delete").clicked() {
                         let node = tree.get(sel_idx).unwrap();
                         let path = tree.path(sel_idx);
-                        let size = if node.is_dir {
+                        let size = if node.is_dir() {
                             tree.subtree_size(sel_idx)
                         } else {
                             node.size
@@ -593,7 +640,7 @@ pub(crate) fn show(
                             node_index: sel_idx,
                             path_display: path.display().to_string(),
                             size_bytes: size,
-                            is_dir: node.is_dir,
+                            is_dir: node.is_dir(),
                         });
                         ui.close();
                     }
@@ -616,38 +663,40 @@ pub(crate) fn show(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use rds_core::tree::FileNode;
+    use rds_core::tree::{FileNode, NO_PARENT};
 
-    fn make_file(name: &str, size: u64, ext: Option<&str>) -> FileNode {
+    fn make_file(size: u64) -> FileNode {
         FileNode {
-            name: name.to_string(),
+            name_offset: 0,
+            name_len: 0,
             size,
-            is_dir: false,
-            children: Vec::new(),
-            parent: None,
-            extension: ext.map(|e| e.to_string()),
-            modified: None,
-            deleted: false,
+            first_child: u32::MAX,
+            next_sibling: u32::MAX,
+            modified: 0,
+            parent: NO_PARENT,
+            extension: 0,
+            flags: 0,
         }
     }
 
-    fn make_dir(name: &str) -> FileNode {
+    fn make_dir() -> FileNode {
         FileNode {
-            name: name.to_string(),
+            name_offset: 0,
+            name_len: 0,
             size: 0,
-            is_dir: true,
-            children: Vec::new(),
-            parent: None,
-            extension: None,
-            modified: None,
-            deleted: false,
+            first_child: u32::MAX,
+            next_sibling: u32::MAX,
+            modified: 0,
+            parent: NO_PARENT,
+            extension: 0,
+            flags: 1,
         }
     }
 
     #[test]
     fn layout_single_file() {
         let mut tree = DirTree::new("/root");
-        tree.insert(0, make_file("a.rs", 1000, Some("rs")));
+        tree.insert(0, make_file(1000), "a.rs");
         let stats = SubtreeStats::compute(&tree);
         let layout = TreemapLayout::compute(&tree, &stats, egui::vec2(800.0, 600.0), tree.root());
         assert_eq!(layout.rects.len(), 1);
@@ -660,9 +709,9 @@ mod tests {
     #[test]
     fn layout_three_files_within_bounds() {
         let mut tree = DirTree::new("/root");
-        tree.insert(0, make_file("a.rs", 600, Some("rs")));
-        tree.insert(0, make_file("b.py", 300, Some("py")));
-        tree.insert(0, make_file("c.js", 100, Some("js")));
+        tree.insert(0, make_file(600), "a.rs");
+        tree.insert(0, make_file(300), "b.py");
+        tree.insert(0, make_file(100), "c.js");
         let stats = SubtreeStats::compute(&tree);
         let layout = TreemapLayout::compute(&tree, &stats, egui::vec2(800.0, 600.0), tree.root());
         assert_eq!(layout.rects.len(), 3);
@@ -677,8 +726,8 @@ mod tests {
     #[test]
     fn layout_largest_gets_largest_area() {
         let mut tree = DirTree::new("/root");
-        tree.insert(0, make_file("big.rs", 900, Some("rs")));
-        tree.insert(0, make_file("small.py", 100, Some("py")));
+        tree.insert(0, make_file(900), "big.rs");
+        tree.insert(0, make_file(100), "small.py");
         let stats = SubtreeStats::compute(&tree);
         let layout = TreemapLayout::compute(&tree, &stats, egui::vec2(800.0, 600.0), tree.root());
         assert_eq!(layout.rects.len(), 2);
@@ -700,9 +749,9 @@ mod tests {
     #[test]
     fn layout_nested_directory() {
         let mut tree = DirTree::new("/root");
-        let sub = tree.insert(0, make_dir("sub"));
-        tree.insert(sub, make_file("a.rs", 500, Some("rs")));
-        tree.insert(sub, make_file("b.rs", 500, Some("rs")));
+        let sub = tree.insert(0, make_dir(), "sub");
+        tree.insert(sub, make_file(500), "a.rs");
+        tree.insert(sub, make_file(500), "b.rs");
         let stats = SubtreeStats::compute(&tree);
         let layout = TreemapLayout::compute(&tree, &stats, egui::vec2(800.0, 600.0), tree.root());
         assert_eq!(layout.rects.len(), 2);
@@ -715,8 +764,8 @@ mod tests {
     #[test]
     fn layout_zero_size_excluded() {
         let mut tree = DirTree::new("/root");
-        tree.insert(0, make_file("a.rs", 1000, Some("rs")));
-        tree.insert(0, make_file("empty.rs", 0, Some("rs")));
+        tree.insert(0, make_file(1000), "a.rs");
+        tree.insert(0, make_file(0), "empty.rs");
         let stats = SubtreeStats::compute(&tree);
         let layout = TreemapLayout::compute(&tree, &stats, egui::vec2(800.0, 600.0), tree.root());
         assert_eq!(layout.rects.len(), 1);
@@ -734,7 +783,10 @@ mod tests {
     #[test]
     fn layout_color_matches_extension() {
         let mut tree = DirTree::new("/root");
-        tree.insert(0, make_file("a.rs", 1000, Some("rs")));
+        let ext_idx = tree.intern_extension(Some("rs"));
+        let mut node = make_file(1000);
+        node.extension = ext_idx;
+        tree.insert(0, node, "a.rs");
         let stats = SubtreeStats::compute(&tree);
         let layout = TreemapLayout::compute(&tree, &stats, egui::vec2(800.0, 600.0), tree.root());
         let expected = ext_stats::hsl_to_color32(&rds_core::stats::color_for_extension("rs"));
@@ -744,7 +796,7 @@ mod tests {
     #[test]
     fn layout_no_extension_color() {
         let mut tree = DirTree::new("/root");
-        tree.insert(0, make_file("Makefile", 1000, None));
+        tree.insert(0, make_file(1000), "Makefile");
         let stats = SubtreeStats::compute(&tree);
         let layout = TreemapLayout::compute(&tree, &stats, egui::vec2(800.0, 600.0), tree.root());
         let expected = ext_stats::hsl_to_color32(&rds_core::stats::color_for_extension(""));
@@ -755,10 +807,8 @@ mod tests {
     fn layout_no_zero_area_rects() {
         let mut tree = DirTree::new("/root");
         for i in 0..20 {
-            tree.insert(
-                0,
-                make_file(&format!("f{i}.rs"), (i as u64 + 1) * 100, Some("rs")),
-            );
+            let name = format!("f{i}.rs");
+            tree.insert(0, make_file((i as u64 + 1) * 100), &name);
         }
         let stats = SubtreeStats::compute(&tree);
         let layout = TreemapLayout::compute(&tree, &stats, egui::vec2(800.0, 600.0), tree.root());
@@ -771,7 +821,7 @@ mod tests {
     #[test]
     fn layout_zero_size_bounds() {
         let mut tree = DirTree::new("/root");
-        tree.insert(0, make_file("a.rs", 1000, Some("rs")));
+        tree.insert(0, make_file(1000), "a.rs");
         let stats = SubtreeStats::compute(&tree);
         let layout = TreemapLayout::compute(&tree, &stats, egui::vec2(0.0, 0.0), tree.root());
         assert!(layout.rects.is_empty());
@@ -780,10 +830,10 @@ mod tests {
     #[test]
     fn layout_deeply_nested_files() {
         let mut tree = DirTree::new("/root");
-        let d1 = tree.insert(0, make_dir("d1"));
-        let d2 = tree.insert(d1, make_dir("d2"));
-        let d3 = tree.insert(d2, make_dir("d3"));
-        tree.insert(d3, make_file("deep.rs", 1000, Some("rs")));
+        let d1 = tree.insert(0, make_dir(), "d1");
+        let d2 = tree.insert(d1, make_dir(), "d2");
+        let d3 = tree.insert(d2, make_dir(), "d3");
+        tree.insert(d3, make_file(1000), "deep.rs");
         let stats = SubtreeStats::compute(&tree);
         let layout = TreemapLayout::compute(&tree, &stats, egui::vec2(800.0, 600.0), tree.root());
         assert_eq!(layout.rects.len(), 1);
@@ -963,9 +1013,9 @@ mod tests {
     #[test]
     fn layout_tracks_depth() {
         let mut tree = DirTree::new("/root");
-        tree.insert(0, make_file("top.rs", 500, Some("rs")));
-        let sub = tree.insert(0, make_dir("sub"));
-        tree.insert(sub, make_file("deep.rs", 500, Some("rs")));
+        tree.insert(0, make_file(500), "top.rs");
+        let sub = tree.insert(0, make_dir(), "sub");
+        tree.insert(sub, make_file(500), "deep.rs");
         let stats = SubtreeStats::compute(&tree);
         let layout = TreemapLayout::compute(&tree, &stats, egui::vec2(200.0, 100.0), tree.root());
 
@@ -979,11 +1029,11 @@ mod tests {
     #[test]
     fn layout_deeply_nested_depth() {
         let mut tree = DirTree::new("/root");
-        let d1 = tree.insert(0, make_dir("d1"));
-        let d2 = tree.insert(d1, make_dir("d2"));
-        let d3 = tree.insert(d2, make_dir("d3"));
-        tree.insert(d3, make_file("deep.rs", 500, Some("rs")));
-        tree.insert(0, make_file("top.rs", 500, Some("rs")));
+        let d1 = tree.insert(0, make_dir(), "d1");
+        let d2 = tree.insert(d1, make_dir(), "d2");
+        let d3 = tree.insert(d2, make_dir(), "d3");
+        tree.insert(d3, make_file(500), "deep.rs");
+        tree.insert(0, make_file(500), "top.rs");
         let stats = SubtreeStats::compute(&tree);
         let layout = TreemapLayout::compute(&tree, &stats, egui::vec2(200.0, 100.0), tree.root());
 
@@ -996,9 +1046,9 @@ mod tests {
     #[test]
     fn layout_cushion_accumulates_across_levels() {
         let mut tree = DirTree::new("/root");
-        let sub = tree.insert(0, make_dir("sub"));
-        tree.insert(sub, make_file("deep.rs", 1000, Some("rs")));
-        tree.insert(0, make_file("top.rs", 1000, Some("rs")));
+        let sub = tree.insert(0, make_dir(), "sub");
+        tree.insert(sub, make_file(1000), "deep.rs");
+        tree.insert(0, make_file(1000), "top.rs");
         let stats = SubtreeStats::compute(&tree);
         let layout = TreemapLayout::compute(&tree, &stats, egui::vec2(200.0, 100.0), tree.root());
 
@@ -1016,7 +1066,7 @@ mod tests {
     #[test]
     fn layout_cushion_coefficients_nonzero() {
         let mut tree = DirTree::new("/root");
-        tree.insert(0, make_file("a.rs", 1000, Some("rs")));
+        tree.insert(0, make_file(1000), "a.rs");
         let stats = SubtreeStats::compute(&tree);
         let layout = TreemapLayout::compute(&tree, &stats, egui::vec2(100.0, 100.0), tree.root());
 
@@ -1152,12 +1202,11 @@ mod tests {
         // Build a tree with 100 dirs x 500 files = 50,000 leaf files.
         let mut tree = DirTree::new("/root");
         for d in 0..100 {
-            let dir = tree.insert(0, make_dir(&format!("dir_{d}")));
+            let dir_name = format!("dir_{d}");
+            let dir = tree.insert(0, make_dir(), &dir_name);
             for f in 0..500 {
-                tree.insert(
-                    dir,
-                    make_file(&format!("file_{f}.rs"), (f as u64 + 1) * 100, Some("rs")),
-                );
+                let name = format!("file_{f}.rs");
+                tree.insert(dir, make_file((f as u64 + 1) * 100), &name);
             }
         }
         let stats = SubtreeStats::compute(&tree);
@@ -1203,10 +1252,10 @@ mod tests {
     #[test]
     fn layout_with_custom_root_shows_subtree_only() {
         let mut tree = DirTree::new("/root");
-        let sub = tree.insert(0, make_dir("sub"));
-        tree.insert(sub, make_file("a.rs", 500, Some("rs")));
-        tree.insert(sub, make_file("b.rs", 300, Some("rs")));
-        tree.insert(0, make_file("top.txt", 200, Some("txt")));
+        let sub = tree.insert(0, make_dir(), "sub");
+        tree.insert(sub, make_file(500), "a.rs");
+        tree.insert(sub, make_file(300), "b.rs");
+        tree.insert(0, make_file(200), "top.txt");
 
         let stats = SubtreeStats::compute(&tree);
         let layout = TreemapLayout::compute(&tree, &stats, egui::vec2(800.0, 600.0), sub);
@@ -1222,8 +1271,8 @@ mod tests {
     #[test]
     fn layout_custom_root_stores_last_root() {
         let mut tree = DirTree::new("/root");
-        let sub = tree.insert(0, make_dir("sub"));
-        tree.insert(sub, make_file("a.rs", 100, Some("rs")));
+        let sub = tree.insert(0, make_dir(), "sub");
+        tree.insert(sub, make_file(100), "a.rs");
         let stats = SubtreeStats::compute(&tree);
         let layout = TreemapLayout::compute(&tree, &stats, egui::vec2(800.0, 600.0), sub);
         assert_eq!(layout.last_root, sub);
@@ -1232,24 +1281,24 @@ mod tests {
     #[test]
     fn drill_target_file_inside_subdir() {
         let mut tree = DirTree::new("/root");
-        let sub = tree.insert(0, make_dir("sub"));
-        let file = tree.insert(sub, make_file("a.rs", 100, Some("rs")));
+        let sub = tree.insert(0, make_dir(), "sub");
+        let file = tree.insert(sub, make_file(100), "a.rs");
         assert_eq!(find_drill_target(&tree, file, 0), Some(sub));
     }
 
     #[test]
     fn drill_target_file_at_top_level_returns_none() {
         let mut tree = DirTree::new("/root");
-        let file = tree.insert(0, make_file("a.rs", 100, Some("rs")));
+        let file = tree.insert(0, make_file(100), "a.rs");
         assert_eq!(find_drill_target(&tree, file, 0), None);
     }
 
     #[test]
     fn drill_target_deeply_nested_file() {
         let mut tree = DirTree::new("/root");
-        let d1 = tree.insert(0, make_dir("d1"));
-        let d2 = tree.insert(d1, make_dir("d2"));
-        let file = tree.insert(d2, make_file("deep.rs", 100, Some("rs")));
+        let d1 = tree.insert(0, make_dir(), "d1");
+        let d2 = tree.insert(d1, make_dir(), "d2");
+        let file = tree.insert(d2, make_file(100), "deep.rs");
         assert_eq!(find_drill_target(&tree, file, 0), Some(d1));
         assert_eq!(find_drill_target(&tree, file, d1), Some(d2));
         assert_eq!(find_drill_target(&tree, file, d2), None);
@@ -1266,7 +1315,7 @@ mod tests {
     #[test]
     fn breadcrumb_chain_one_level_deep() {
         let mut tree = DirTree::new("/root");
-        let sub = tree.insert(0, make_dir("sub"));
+        let sub = tree.insert(0, make_dir(), "sub");
         let chain = breadcrumb_chain(&tree, sub);
         assert_eq!(chain.len(), 2);
         assert_eq!(chain[0], (0, "/root".to_string()));
@@ -1276,9 +1325,9 @@ mod tests {
     #[test]
     fn breadcrumb_chain_three_levels() {
         let mut tree = DirTree::new("/root");
-        let d1 = tree.insert(0, make_dir("d1"));
-        let d2 = tree.insert(d1, make_dir("d2"));
-        let d3 = tree.insert(d2, make_dir("d3"));
+        let d1 = tree.insert(0, make_dir(), "d1");
+        let d2 = tree.insert(d1, make_dir(), "d2");
+        let d3 = tree.insert(d2, make_dir(), "d3");
         let chain = breadcrumb_chain(&tree, d3);
         assert_eq!(chain.len(), 4);
         assert_eq!(chain[0], (0, "/root".to_string()));
@@ -1294,12 +1343,11 @@ mod tests {
         // 200 directories x 500 files = 100,000 leaf files.
         let mut tree = DirTree::new("/root");
         for d in 0..200 {
-            let dir = tree.insert(0, make_dir(&format!("dir_{d}")));
+            let dir_name = format!("dir_{d}");
+            let dir = tree.insert(0, make_dir(), &dir_name);
             for f in 0..500 {
-                tree.insert(
-                    dir,
-                    make_file(&format!("file_{f}.rs"), (f as u64 + 1) * 10, Some("rs")),
-                );
+                let name = format!("file_{f}.rs");
+                tree.insert(dir, make_file((f as u64 + 1) * 10), &name);
             }
         }
         let stats = SubtreeStats::compute(&tree);
@@ -1326,10 +1374,8 @@ mod tests {
         // 100 files — well below the 50k cap.
         let mut tree = DirTree::new("/root");
         for i in 0..100 {
-            tree.insert(
-                0,
-                make_file(&format!("file_{i}.rs"), (i as u64 + 1) * 100, Some("rs")),
-            );
+            let name = format!("file_{i}.rs");
+            tree.insert(0, make_file((i as u64 + 1) * 100), &name);
         }
         let stats = SubtreeStats::compute(&tree);
         let layout = TreemapLayout::compute(&tree, &stats, egui::vec2(800.0, 600.0), tree.root());
@@ -1346,12 +1392,11 @@ mod tests {
         // 200 dirs x 500 files = 100,000 — triggers aggregation.
         let mut tree = DirTree::new("/root");
         for d in 0..200 {
-            let dir = tree.insert(0, make_dir(&format!("dir_{d}")));
+            let dir_name = format!("dir_{d}");
+            let dir = tree.insert(0, make_dir(), &dir_name);
             for f in 0..500 {
-                tree.insert(
-                    dir,
-                    make_file(&format!("file_{f}.rs"), (f as u64 + 1) * 10, Some("rs")),
-                );
+                let name = format!("file_{f}.rs");
+                tree.insert(dir, make_file((f as u64 + 1) * 10), &name);
             }
         }
         let stats = SubtreeStats::compute(&tree);
@@ -1373,9 +1418,10 @@ mod tests {
     fn aggregated_rect_size_sum_matches() {
         // 1 directory with 60,000 files of size 1 each.
         let mut tree = DirTree::new("/root");
-        let dir = tree.insert(0, make_dir("big_dir"));
+        let dir = tree.insert(0, make_dir(), "big_dir");
         for f in 0..60_000 {
-            tree.insert(dir, make_file(&format!("f{f}.txt"), 1, Some("txt")));
+            let name = format!("f{f}.txt");
+            tree.insert(dir, make_file(1), &name);
         }
         let stats = SubtreeStats::compute(&tree);
         let layout = TreemapLayout::compute(&tree, &stats, egui::vec2(800.0, 600.0), tree.root());

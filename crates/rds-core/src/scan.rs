@@ -15,6 +15,14 @@ pub enum ScanEvent {
     NodeDiscovered {
         node: FileNode,
         parent_index: Option<usize>,
+        /// Raw extension string for the GUI to intern into the DirTree's
+        /// extension table. The scanner sets `node.extension = 0` (placeholder)
+        /// and passes the actual extension string here.
+        extension_name: Option<Box<str>>,
+        /// Node name passed separately because the scanner does not have
+        /// access to the DirTree's name buffer. The GUI appends this to
+        /// the buffer when inserting the node.
+        node_name: Box<str>,
     },
     Progress {
         files_scanned: u64,
@@ -71,6 +79,7 @@ impl Default for ScanConfig {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::tree::NO_PARENT;
 
     #[test]
     fn scan_config_defaults() {
@@ -84,26 +93,33 @@ mod tests {
     #[test]
     fn scan_event_node_discovered_construction() {
         let node = FileNode {
-            name: "test.txt".to_string(),
+            name_offset: 0,
+            name_len: 0,
             size: 1024,
-            is_dir: false,
-            children: Vec::new(),
-            parent: None,
-            extension: Some("txt".to_string()),
-            modified: None,
-            deleted: false,
+            first_child: u32::MAX,
+            next_sibling: u32::MAX,
+            modified: 0,
+            parent: NO_PARENT,
+            extension: 0,
+            flags: 0,
         };
         let event = ScanEvent::NodeDiscovered {
             node: node.clone(),
             parent_index: Some(0),
+            extension_name: Some("txt".into()),
+            node_name: "test.txt".into(),
         };
         if let ScanEvent::NodeDiscovered {
             node: n,
             parent_index,
+            extension_name,
+            node_name,
         } = event
         {
-            assert_eq!(n.name, "test.txt");
+            assert_eq!(&*node_name, "test.txt");
+            assert_eq!(n.size, 1024);
             assert_eq!(parent_index, Some(0));
+            assert_eq!(extension_name.as_deref(), Some("txt"));
         } else {
             panic!("Expected NodeDiscovered variant");
         }

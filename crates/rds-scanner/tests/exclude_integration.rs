@@ -11,9 +11,13 @@ fn collect_discovered_names(rx: crossbeam_channel::Receiver<ScanEvent>) -> Vec<S
     let mut names = Vec::new();
     for event in rx.iter() {
         match event {
-            ScanEvent::NodeDiscovered { node, parent_index } => {
+            ScanEvent::NodeDiscovered {
+                node_name,
+                parent_index,
+                ..
+            } => {
                 if parent_index.is_some() {
-                    names.push(node.name.clone());
+                    names.push(node_name.to_string());
                 }
             }
             ScanEvent::ScanComplete { .. } => break,

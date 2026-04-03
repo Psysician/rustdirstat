@@ -13,8 +13,8 @@ rustdirstat/
       README.md               # Arena invariants and index stability contract
       src/
         lib.rs                # Re-exports all public types from submodules
-        tree.rs               # FileNode (with deleted flag) + DirTree arena (Vec<FileNode> with usize indices, tombstone(), new_with_capacity/from_root_with_capacity)
-        scan.rs               # ScanEvent enum, ScanConfig, ScanStats
+        tree.rs               # FileNode (40 bytes: string arena name, u32 indices, first-child/next-sibling linked list, u16 interned extension, flags bitfield) + DirTree arena (Vec<FileNode> + name_buffer + extensions table, ChildIter, tombstone, shrink_to_fit)
+        scan.rs               # ScanEvent enum (NodeDiscovered carries FileNode + node_name + extension_name), ScanConfig, ScanStats
         config.rs             # AppConfig + CustomCommand + ColorScheme enum (Default/Dark/Light) (TOML-deserializable)
         stats.rs              # ExtensionStats, HslColor, color_for_extension(), compute_extension_stats() (filters deleted nodes)
       benches/
@@ -35,14 +35,14 @@ rustdirstat/
       Cargo.toml              # Deps: eframe, egui, egui-notify, streemap, crossbeam-channel, rds-core, rds-scanner, rfd, trash, open, serde, serde_json, csv; bench-internals feature
       CLAUDE.md
       src/
-        lib.rs                # RustDirStatApp: ScanPhase state machine, dir picker, scanner integration, event drain (DRAIN_BATCH_SIZE=5000), tree_capacity_hint pre-allocation, 3-panel layout, keyboard shortcuts (Ctrl+O, Escape, F5, Backspace), theme application via ThemePreference, config persistence, recent paths, PendingDelete, confirm_delete, toast notifications, scan error log panel, max-nodes abort dialog; bench-internals re-exports
+        lib.rs                # RustDirStatApp: ScanPhase state machine, dir picker, scanner integration, event drain (DRAIN_BATCH_SIZE=5000), tree_capacity_hint pre-allocation, WinDirStat-style layout (top: tree + extensions, bottom: treemap), keyboard shortcuts (Ctrl+O, Escape, F5, Backspace), theme via ThemePreference, treemap mesh cache (TreemapMeshCache), config persistence, recent paths, PendingDelete, confirm_delete, toast notifications, scan error log panel, max-nodes abort dialog; bench-internals re-exports
         notifications.rs       # Notifications wrapper around egui_notify::Toasts — info/warning/error toasts with auto-dismiss
         error_log.rs           # ScanErrorLog (capped Vec of path+error pairs, overflow counter), error log panel rendering
         tree_view.rs           # SubtreeStats cache (filters deleted), TreeViewState, sorted tree rendering with context menu, empty dir "(empty)" hint
         ext_stats.rs           # hsl_to_color32, extension stats panel with stacked bar + Grid table
-        treemap.rs             # CushionCoeffs, TreemapRect (aggregated_count), TreemapLayout, MAX_DISPLAY_RECTS (50k cap), recursive squarify with aggregation, cushion mesh render, right-click context menu
+        treemap.rs             # CushionCoeffs, TreemapRect (aggregated_count), TreemapLayout, TreemapMeshCache (Arc<egui::Mesh>, rebuilt on layout/extension change), MAX_DISPLAY_RECTS (50k cap), recursive squarify with aggregation, build_mesh_cache, right-click context menu
         duplicates.rs          # Duplicates bottom panel with collapsible groups, wasted space, context menu
-        actions.rs             # execute_delete (trash + tombstone), cleanup_duplicate_groups, open_in_file_manager (D-Bus FileManager1.ShowItems on Linux, Explorer /select on Windows, open -R on macOS), execute_custom_command
+        actions.rs             # execute_delete (trash + tombstone), cleanup_duplicate_groups, open_in_file_manager (D-Bus FileManager1.ShowItems on Linux, Explorer /select on Windows, open -R on macOS), path_to_file_uri (RFC 3986 percent-encoding), execute_custom_command
         command_editor.rs      # Command editor window: inline editing of custom commands, add/remove controls
         export.rs              # CSV/JSON export: ExportFormat/ExportScope enums, export_tree (DFS + serialize), export_duplicates, export dialog UI
         settings.rs            # Settings dialog: SettingsDialogState, exclude patterns editor, sort order/color scheme ComboBox, Apply/Cancel
@@ -86,17 +86,20 @@ rustdirstat/
 ## Key Architectural Patterns
 
 ### Arena-Allocated Tree (rds-core/src/tree.rs)
-- `DirTree` = `Vec<FileNode>` with `usize` index references (not Rc/Box)
+- `DirTree` = `Vec<FileNode>` (40 bytes/node) + `name_buffer: Vec<u8>` (string arena) + `extensions: Vec<Box<str>>` (interned extension table)
+- `FileNode` uses u32 indices throughout, first-child/next-sibling intrusive linked list (zero per-node heap allocations), flags bitfield for `is_dir`/`deleted`
+- Names accessed via `tree.name(index)`, extensions via `tree.extension_str(node.extension)`
 - Insert-only: nodes never removed, indices stable for lifetime of tree
-- Delete via `tombstone()`: sets `deleted=true`, `size=0`, removes from parent's children; node remains in Vec
+- Delete via `tombstone()`: sets deleted flag, zeroes size, unlinks from sibling chain; node remains in Vec
 - All stats/rendering code filters deleted nodes (`SubtreeStats`, `ExtensionStats`, `sorted_children`)
-- Cache-local traversal, zero reference-counting overhead
+- `ChildIter` iterator walks the first-child/next-sibling linked list
+- `shrink_to_fit()` releases excess capacity in arena, name buffer, and extension table after scan
 - Root always at index 0
 
 ### Scanner-GUI Channel Protocol (rds-core/src/scan.rs)
 - Bounded `crossbeam-channel` carries `ScanEvent` variants from scanner thread to GUI
 - GUI drains with `try_recv()` per frame (never blocks)
-- `NodeDiscovered` carries full `FileNode` + `parent_index` (GUI-side arena index)
+- `NodeDiscovered` carries compact `FileNode` + `parent_index` + `node_name: Box<str>` + `extension_name: Option<Box<str>>` (name and extension travel separately since scanner lacks DirTree's string arena and extension table)
 - `ScanError` carries path + error string — GUI accumulates in `ScanErrorLog` (capped at 1000 entries)
 - Scanner thread runs duplicate detection before sending `ScanComplete`
 
@@ -117,8 +120,9 @@ rustdirstat/
 ### Performance & Treemap Aggregation (crates/rds-gui/src/treemap.rs)
 - `MAX_DISPLAY_RECTS` (50,000) caps rendered rectangles; excess items merged into "other" buckets per directory
 - Aggregated rects use `node_index = usize::MAX` sentinel, neutral gray color, `aggregated_count: Option<(u64, u64)>` for item count + bytes
-- `DirTree::new_with_capacity`/`from_root_with_capacity` pre-allocate arena; capacity capped at 100k via `.min(100_000)`
-- Scanner pre-allocates `HashMap` and `Vec` with same 100k cap
+- `TreemapMeshCache` caches the cushion mesh as `Arc<egui::Mesh>` for O(1) per-frame rendering; rebuilds only on layout, extension filter, or panel offset change
+- `DirTree::new_with_capacity`/`from_root_with_capacity` pre-allocate arena and name buffer; capacity capped at 100k via `.min(100_000)`
+- Scanner pre-allocates `HashMap<PathBuf, u32>` with same 100k cap
 - `DRAIN_BATCH_SIZE = 5000` events per frame (bounded channel is 4096 slots)
 - `--scan-only` CLI flag runs headless scan for benchmarking
 - Criterion benchmarks in `crates/rds-core/benches/` and `crates/rds-gui/benches/` (gui requires `bench-internals` feature)

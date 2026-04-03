@@ -35,7 +35,7 @@ pub(crate) fn cleanup_duplicate_groups(groups: &mut Vec<DuplicateGroup>, tree: &
     for group in groups.iter_mut() {
         group
             .node_indices
-            .retain(|&idx| tree.get(idx).is_some_and(|n| !n.deleted));
+            .retain(|&idx| tree.get(idx).is_some_and(|n| !n.deleted()));
 
         let file_size = group
             .node_indices
@@ -62,7 +62,7 @@ pub(crate) fn open_in_file_manager(tree: &DirTree, index: usize) -> Result<(), S
         .ok_or_else(|| format!("node at index {index} not found"))?;
     let path = tree.path(index);
 
-    let result = if node.is_dir {
+    let result = if node.is_dir() {
         open::that_detached(&path).map_err(|e| e.to_string())
     } else {
         open_file_revealing(&path)
@@ -264,31 +264,33 @@ pub(crate) fn show_custom_commands_menu(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use rds_core::tree::FileNode;
+    use rds_core::tree::{FileNode, NO_PARENT};
 
-    fn make_file_node(name: &str, size: u64) -> FileNode {
+    fn make_file_node(size: u64) -> FileNode {
         FileNode {
-            name: name.to_string(),
+            name_offset: 0,
+            name_len: 0,
             size,
-            is_dir: false,
-            children: Vec::new(),
-            parent: None,
-            extension: None,
-            modified: None,
-            deleted: false,
+            first_child: u32::MAX,
+            next_sibling: u32::MAX,
+            modified: 0,
+            parent: NO_PARENT,
+            extension: 0,
+            flags: 0,
         }
     }
 
-    fn make_dir_node(name: &str) -> FileNode {
+    fn make_dir_node() -> FileNode {
         FileNode {
-            name: name.to_string(),
+            name_offset: 0,
+            name_len: 0,
             size: 0,
-            is_dir: true,
-            children: Vec::new(),
-            parent: None,
-            extension: None,
-            modified: None,
-            deleted: false,
+            first_child: u32::MAX,
+            next_sibling: u32::MAX,
+            modified: 0,
+            parent: NO_PARENT,
+            extension: 0,
+            flags: 1,
         }
     }
 
@@ -303,8 +305,8 @@ mod tests {
         std::fs::write(&file_path, "hello").unwrap();
 
         let mut tree = DirTree::new(root_path.to_str().unwrap());
-        let subdir_idx = tree.insert(0, make_dir_node("subdir"));
-        let file_idx = tree.insert(subdir_idx, make_file_node("test.txt", 5));
+        let subdir_idx = tree.insert(0, make_dir_node(), "subdir");
+        let file_idx = tree.insert(subdir_idx, make_file_node(5), "test.txt");
 
         let result = open_in_file_manager(&tree, file_idx);
         assert!(result.is_ok(), "open file failed: {:?}", result.err());
@@ -321,8 +323,8 @@ mod tests {
         std::fs::write(&file_path, "hello").unwrap();
 
         let mut tree = DirTree::new(root_path.to_str().unwrap());
-        let subdir_idx = tree.insert(0, make_dir_node("subdir"));
-        tree.insert(subdir_idx, make_file_node("test.txt", 5));
+        let subdir_idx = tree.insert(0, make_dir_node(), "subdir");
+        tree.insert(subdir_idx, make_file_node(5), "test.txt");
 
         let result = open_in_file_manager(&tree, subdir_idx);
         assert!(result.is_ok(), "open dir failed: {:?}", result.err());
@@ -339,8 +341,8 @@ mod tests {
         std::fs::write(&file_path, "hello").unwrap();
 
         let mut tree = DirTree::new(root_path.to_str().unwrap());
-        let subdir_idx = tree.insert(0, make_dir_node("subdir"));
-        tree.insert(subdir_idx, make_file_node("test.txt", 5));
+        let subdir_idx = tree.insert(0, make_dir_node(), "subdir");
+        tree.insert(subdir_idx, make_file_node(5), "test.txt");
 
         let result = open_in_file_manager(&tree, 0);
         assert!(result.is_ok(), "open root failed: {:?}", result.err());
@@ -349,7 +351,7 @@ mod tests {
     #[test]
     fn open_nonexistent_path_returns_result() {
         let mut tree = DirTree::new("/nonexistent/path/that/does/not/exist");
-        let file_idx = tree.insert(0, make_file_node("ghost.txt", 42));
+        let file_idx = tree.insert(0, make_file_node(42), "ghost.txt");
 
         let result = open_in_file_manager(&tree, file_idx);
         // The function should not panic. On Linux, xdg-open may not fail
@@ -446,7 +448,7 @@ mod tests {
         let root_path = tmp.path();
 
         let mut tree = DirTree::new(root_path.to_str().unwrap());
-        let file_idx = tree.insert(0, make_file_node("test.txt", 5));
+        let file_idx = tree.insert(0, make_file_node(5), "test.txt");
 
         let cmd = CustomCommand {
             name: "Echo Path".to_string(),
