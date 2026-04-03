@@ -215,7 +215,7 @@ impl RustDirStatApp {
             treemap_mesh_cache: None,
             treemap_root: 0,
             duplicate_groups: Vec::new(),
-            hash_duplicates_enabled: true,
+            hash_duplicates_enabled: false,
             detecting_duplicates: false,
             pending_delete: None,
             freed_bytes: 0,
@@ -1011,8 +1011,8 @@ impl eframe::App for RustDirStatApp {
                     let available_size = ui.available_size();
                     let needs_recompute = self.treemap_layout.as_ref().is_none_or(|l| {
                         l.last_root != self.treemap_root
-                            || (l.last_size.x - available_size.x).abs() > 1.0
-                            || (l.last_size.y - available_size.y).abs() > 1.0
+                            || (l.last_size.x - available_size.x).abs() > 0.5
+                            || (l.last_size.y - available_size.y).abs() > 0.5
                     });
 
                     if needs_recompute {
@@ -1129,7 +1129,7 @@ mod tests {
         assert!(app.selected_extension.is_none());
         assert_eq!(app.treemap_root, 0);
         assert!(app.duplicate_groups.is_empty());
-        assert!(app.hash_duplicates_enabled);
+        assert!(!app.hash_duplicates_enabled);
         assert!(!app.detecting_duplicates);
         assert!(app.pending_delete.is_none());
         assert_eq!(app.freed_bytes, 0);
