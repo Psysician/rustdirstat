@@ -15,4 +15,4 @@ Project-level documentation.
 | --------- | ---- | ------------ |
 | `ai-context/` | AI-optimized project structure and documentation registry | Onboarding, understanding project layout, finding documentation |
 | `superpowers/specs/` | Design specification for rustdirstat | Understanding architecture decisions, reviewing feature scope |
-| `superpowers/plans/` | Superpowers-generated implementation plans | Reviewing superpowers plan output (separate from milestone plans in plans/) |
+| `superpowers/plans/` | Superpowers-generated implementation plans (includes MS14-MS21) | Reviewing superpowers plan output (separate from milestone plans in plans/) |

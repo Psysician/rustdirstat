@@ -7,7 +7,8 @@ Registry of all project documentation, classified by tier for navigation.
 | Path | Purpose |
 |------|---------|
 | `CLAUDE.md` | Root AI context: file/directory guide, build/test commands, dev requirements |
-| `README.md` | Architecture decisions, arena design rationale, scanner-GUI event flow, dependency strategy |
+| `LICENSE` | MIT license terms |
+| `README.md` | Architecture decisions, arena design rationale, scanner-GUI event flow, dependency strategy, installation instructions, usage guide, keyboard shortcuts |
 | `docs/milestones.md` | MS1-MS21 roadmap with deliverables and dependency graph |
 | `docs/superpowers/specs/2026-03-19-rustdirstat-design.md` | Full design specification: goals, architecture, data flow, dependencies, testing strategy |
 | `docs/ai-context/project-structure.md` | Annotated file tree, architectural patterns, milestone status |
@@ -52,6 +53,7 @@ Registry of all project documentation, classified by tier for navigation.
 | `docs/superpowers/plans/2026-03-22-ms18-error-handling-edge-cases.md` | MS18 implementation plan: toast notifications, scan error log, max-nodes dialog, action error surfacing, structured tracing, empty dir hints (completed) |
 | `docs/superpowers/plans/2026-03-22-ms19-performance-optimization.md` | MS19 implementation plan: criterion benchmarks, arena pre-allocation, treemap aggregation, event drain tuning, --scan-only CLI, memory audit (completed) |
 | `docs/superpowers/plans/2026-03-23-ms20-cross-platform-polish.md` | MS20 implementation plan: dark/light/system theme via ThemePreference, keyboard shortcuts (Ctrl+O, Escape, F5, Backspace), D-Bus Linux file reveal, minimum viewport size (completed) |
+| `docs/superpowers/plans/2026-03-23-ms21-packaging-distribution.md` | MS21 implementation plan: MIT license, package metadata, app icon, release workflow, README expansion, release-build recipe (completed) |
 | `docs/benchmarks.md` | Memory usage audit: struct sizes, per-node heap cost, total projections at 100k/1M/10M, scan throughput, treemap rendering budget |
 
 ## Cross-Reference Map
@@ -62,6 +64,7 @@ Registry of all project documentation, classified by tier for navigation.
 | Scanner-GUI protocol | `README.md` (Architecture) | `scan.rs`, design spec |
 | Dependency versions | `Cargo.toml` ([workspace.dependencies]) | `README.md` (Dependency management) |
 | CI pipeline | `.github/workflows/ci.yml` | `README.md` (CI section) |
+| Release workflow | `.github/workflows/release.yml` | `README.md` (Installation), `justfile` (release-build recipe) |
 | Milestones & scope | `docs/milestones.md` | Design spec (Goals/Non-Goals) |
 | Config schema | `crates/rds-core/src/config.rs` | Design spec (Configuration) |
 | Extension colors | `crates/rds-core/src/stats.rs` | Design spec (Treemap Rendering) |

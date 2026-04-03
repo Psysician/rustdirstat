@@ -53,6 +53,10 @@ bench-report:
 bench-compare dir="/usr":
     ./scripts/benchmark-comparison.sh {{dir}}
 
+# Build optimized release binary
+release-build:
+    cargo build --release
+
 # Remove build artifacts
 clean:
     cargo clean
