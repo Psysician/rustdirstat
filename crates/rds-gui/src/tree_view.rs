@@ -345,7 +345,10 @@ fn render_node(
             state.cached_sort_order = Some(sort_order);
         }
         // Compute and cache if not yet present.
-        state.sorted_cache.entry(index).or_insert_with(|| sorted_children(tree, index, stats, sort_order));
+        state
+            .sorted_cache
+            .entry(index)
+            .or_insert_with(|| sorted_children(tree, index, stats, sort_order));
         // Clone the cached Vec to allow mutable `state` borrow in recursive call.
         // Vec<usize> clone is O(k), far cheaper than the O(k log k) sort it replaces.
         let children = state.sorted_cache[&index].clone();

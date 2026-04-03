@@ -828,12 +828,8 @@ impl eframe::App for RustDirStatApp {
                     + BTN_EXPORT
                     + SEPARATORS;
                 #[cfg(not(debug_assertions))]
-                const TOOLBAR_FIXED_CONTROLS_WIDTH: f32 = BTN_SCAN
-                    + BTN_COMMANDS
-                    + BTN_SETTINGS
-                    + BTN_EXPORT
-                    + SEPARATORS
-                    - 10.0; // subtract one hidden separator
+                const TOOLBAR_FIXED_CONTROLS_WIDTH: f32 =
+                    BTN_SCAN + BTN_COMMANDS + BTN_SETTINGS + BTN_EXPORT + SEPARATORS - 10.0; // subtract one hidden separator
                 let text_width = (ui.available_width() - TOOLBAR_FIXED_CONTROLS_WIDTH).max(100.0);
                 let response = ui.add(
                     egui::TextEdit::singleline(&mut self.path_input)
