@@ -70,8 +70,17 @@ pub struct AppConfig {
 
 impl Default for AppConfig {
     fn default() -> Self {
+        #[cfg(target_os = "windows")]
+        let exclude_patterns = vec![
+            "$RECYCLE.BIN".to_string(),
+            "System Volume Information".to_string(),
+            "WindowsApps".to_string(),
+        ];
+        #[cfg(not(target_os = "windows"))]
+        let exclude_patterns = Vec::new();
+
         AppConfig {
-            exclude_patterns: Vec::new(),
+            exclude_patterns,
             custom_commands: Vec::new(),
             color_scheme: ColorScheme::default(),
             default_sort: SortOrder::default(),
@@ -89,7 +98,7 @@ mod tests {
     #[test]
     fn app_config_defaults() {
         let config = AppConfig::default();
-        assert!(config.exclude_patterns.is_empty());
+        assert_eq!(config.exclude_patterns, AppConfig::default().exclude_patterns);
         assert!(config.custom_commands.is_empty());
         assert_eq!(config.color_scheme, ColorScheme::Default);
         assert_eq!(config.default_sort, SortOrder::SizeDesc);

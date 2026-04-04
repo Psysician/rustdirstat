@@ -183,6 +183,7 @@ pub(crate) fn show(
     custom_commands: &[CustomCommand],
     sort_order: SortOrder,
     notifications: &mut crate::notifications::Notifications,
+    theme_colors: &crate::ThemeColors,
     ui: &mut egui::Ui,
 ) {
     // Detect external selection change (e.g., treemap click).
@@ -207,6 +208,7 @@ pub(crate) fn show(
             custom_commands,
             sort_order,
             notifications,
+            theme_colors,
             ui,
             0,
         );
@@ -228,6 +230,7 @@ fn render_node(
     custom_commands: &[CustomCommand],
     sort_order: SortOrder,
     notifications: &mut crate::notifications::Notifications,
+    theme_colors: &crate::ThemeColors,
     ui: &mut egui::Ui,
     depth: usize,
 ) {
@@ -282,7 +285,7 @@ fn render_node(
         };
 
         let rich_label = if is_empty_dir {
-            egui::RichText::new(&label_text).color(egui::Color32::GRAY)
+            egui::RichText::new(&label_text).color(theme_colors.placeholder_text)
         } else {
             egui::RichText::new(&label_text)
         };
@@ -364,6 +367,7 @@ fn render_node(
                 custom_commands,
                 sort_order,
                 notifications,
+                theme_colors,
                 ui,
                 depth + 1,
             );

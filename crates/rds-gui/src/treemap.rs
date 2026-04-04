@@ -2,8 +2,10 @@
 //!
 //! Converts a `DirTree` + `SubtreeStats` into a flat list of `TreemapRect`
 //! values ready for painting. Directories are recursed into; only leaf files
-//! produce output rects. Colors come from `ext_stats::hsl_to_color32` via
-//! `rds_core::stats::color_for_extension`.
+//! produce output rects. Colors come from rank-based golden-ratio hue spacing
+//! (via `ExtensionStats`) with `color_for_extension` as fallback.
+
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use crate::PendingDelete;
 use crate::ext_stats;
@@ -39,6 +41,11 @@ const AMBIENT: f32 = 0.3;
 const LIGHT_X: f32 = -0.408_248_3;
 const LIGHT_Y: f32 = -0.408_248_3;
 const LIGHT_Z: f32 = 0.816_496_6;
+
+/// Monotonically increasing counter for layout generations.
+/// Each `TreemapLayout::compute()` call bumps this so the mesh cache
+/// can detect when the layout changed (e.g. after a window resize).
+static NEXT_LAYOUT_GEN: AtomicU64 = AtomicU64::new(0);
 
 /// Accumulated parabolic ridge coefficients for cushion shading.
 #[derive(Clone, Copy, Default, Debug)]
@@ -187,6 +194,9 @@ pub struct TreemapLayout {
     /// Root node used for this layout computation. Used for cache invalidation
     /// when treemap_root changes via drill-down. (ref: DL-009)
     pub last_root: usize,
+    /// Monotonic generation counter. Bumped on every `compute()` call so the
+    /// mesh cache can detect layout changes (e.g. window resize).
+    pub generation: u64,
 }
 
 /// Cached GPU mesh for the treemap, built from layout + extension filter.
@@ -200,6 +210,8 @@ pub struct TreemapMeshCache {
     pub extension_filter: Option<String>,
     /// The screen offset this mesh was built with.
     pub offset: egui::Vec2,
+    /// Layout generation this cache was built from.
+    pub layout_generation: u64,
 }
 
 impl TreemapLayout {
@@ -208,7 +220,18 @@ impl TreemapLayout {
         stats: &SubtreeStats,
         size: egui::Vec2,
         root_index: usize,
+        ext_stats: Option<&[rds_core::stats::ExtensionStats]>,
     ) -> Self {
+        // Build a lookup from extension name to pre-computed Color32
+        // using the rank-based golden-ratio colors from ExtensionStats.
+        let ext_colors: std::collections::HashMap<String, egui::Color32> = ext_stats
+            .map(|es| {
+                es.iter()
+                    .map(|s| (s.extension.clone(), ext_stats::hsl_to_color32(&s.color)))
+                    .collect()
+            })
+            .unwrap_or_default();
+
         let mut rects = Vec::new();
         if size.x > 0.0 && size.y > 0.0 {
             let bounds = streemap::Rect {
@@ -228,12 +251,14 @@ impl TreemapLayout {
                 0,
                 &mut rects,
                 &mut rect_count,
+                &ext_colors,
             );
         }
         TreemapLayout {
             rects,
             last_size: size,
             last_root: root_index,
+            generation: NEXT_LAYOUT_GEN.fetch_add(1, Ordering::Relaxed),
         }
     }
 }
@@ -249,6 +274,7 @@ fn compute_recursive(
     depth: u32,
     result: &mut Vec<TreemapRect>,
     rect_count: &mut usize,
+    ext_colors: &std::collections::HashMap<String, egui::Color32>,
 ) {
     if bounds.w < MIN_RECT_DIM || bounds.h < MIN_RECT_DIM {
         return;
@@ -337,10 +363,13 @@ fn compute_recursive(
                 depth + 1,
                 result,
                 rect_count,
+                ext_colors,
             );
         } else {
             let ext = tree.extension_str(node.extension).unwrap_or("");
-            let color = ext_stats::hsl_to_color32(&rds_core::stats::color_for_extension(ext));
+            let color = ext_colors.get(ext).copied().unwrap_or_else(|| {
+                ext_stats::hsl_to_color32(&rds_core::stats::color_for_extension(ext))
+            });
             result.push(TreemapRect {
                 node_index: item.node_index,
                 rect: egui::Rect::from_min_size(
@@ -449,10 +478,13 @@ pub(crate) fn build_mesh_cache(
     tree: &DirTree,
     highlighted_extension: &Option<String>,
     offset: egui::Vec2,
+    theme_colors: &crate::ThemeColors,
 ) -> TreemapMeshCache {
+    let dim_factor = theme_colors.dim_factor;
+    let aggregated_color = theme_colors.aggregated_color;
     let effective_color = |rect_info: &TreemapRect| -> egui::Color32 {
         if rect_info.node_index == usize::MAX {
-            return rect_info.color;
+            return aggregated_color;
         }
         if let Some(ext) = highlighted_extension {
             let matches = tree
@@ -462,12 +494,14 @@ pub(crate) fn build_mesh_cache(
                 rect_info.color
             } else {
                 let [r, g, b, a] = rect_info.color.to_array();
-                egui::Color32::from_rgba_premultiplied(
-                    (r as f32 * 0.3) as u8,
-                    (g as f32 * 0.3) as u8,
-                    (b as f32 * 0.3) as u8,
-                    a,
-                )
+                let dim = |ch: u8| -> u8 {
+                    if dim_factor < 0.5 {
+                        (ch as f32 * dim_factor) as u8
+                    } else {
+                        (ch as f32 + (255.0 - ch as f32) * dim_factor) as u8
+                    }
+                };
+                egui::Color32::from_rgba_premultiplied(dim(r), dim(g), dim(b), a)
             }
         } else {
             rect_info.color
@@ -500,6 +534,7 @@ pub(crate) fn build_mesh_cache(
         flat_rects,
         extension_filter: highlighted_extension.clone(),
         offset,
+        layout_generation: layout.generation,
     }
 }
 
@@ -517,6 +552,7 @@ pub(crate) fn show(
     custom_commands: &[CustomCommand],
     notifications: &mut crate::notifications::Notifications,
     mesh_cache: &mut Option<TreemapMeshCache>,
+    theme_colors: &crate::ThemeColors,
     ui: &mut egui::Ui,
 ) {
     // Allocate exactly the layout size for correct rect positioning.
@@ -526,7 +562,8 @@ pub(crate) fn show(
 
     // Rebuild mesh cache if stale (extension filter or offset changed).
     let needs_rebuild = mesh_cache.as_ref().is_none_or(|c| {
-        c.extension_filter != *highlighted_extension
+        c.layout_generation != layout.generation
+            || c.extension_filter != *highlighted_extension
             || (c.offset.x - offset.x).abs() > 0.5
             || (c.offset.y - offset.y).abs() > 0.5
     });
@@ -536,6 +573,7 @@ pub(crate) fn show(
             tree,
             highlighted_extension,
             offset,
+            theme_colors,
         ));
     }
     let cache = mesh_cache.as_ref().unwrap();
@@ -558,7 +596,7 @@ pub(crate) fn show(
         painter.rect_stroke(
             abs_rect,
             0.0,
-            egui::Stroke::new(2.0, egui::Color32::WHITE),
+            egui::Stroke::new(2.0, theme_colors.selection_border),
             egui::StrokeKind::Outside,
         );
     }
@@ -699,7 +737,8 @@ mod tests {
         let mut tree = DirTree::new("/root");
         tree.insert(0, make_file(1000), "a.rs");
         let stats = SubtreeStats::compute(&tree);
-        let layout = TreemapLayout::compute(&tree, &stats, egui::vec2(800.0, 600.0), tree.root());
+        let layout =
+            TreemapLayout::compute(&tree, &stats, egui::vec2(800.0, 600.0), tree.root(), None);
         assert_eq!(layout.rects.len(), 1);
         let r = &layout.rects[0];
         assert_eq!(r.node_index, 1);
@@ -714,7 +753,8 @@ mod tests {
         tree.insert(0, make_file(300), "b.py");
         tree.insert(0, make_file(100), "c.js");
         let stats = SubtreeStats::compute(&tree);
-        let layout = TreemapLayout::compute(&tree, &stats, egui::vec2(800.0, 600.0), tree.root());
+        let layout =
+            TreemapLayout::compute(&tree, &stats, egui::vec2(800.0, 600.0), tree.root(), None);
         assert_eq!(layout.rects.len(), 3);
         for r in &layout.rects {
             assert!(r.rect.min.x >= 0.0);
@@ -730,7 +770,8 @@ mod tests {
         tree.insert(0, make_file(900), "big.rs");
         tree.insert(0, make_file(100), "small.py");
         let stats = SubtreeStats::compute(&tree);
-        let layout = TreemapLayout::compute(&tree, &stats, egui::vec2(800.0, 600.0), tree.root());
+        let layout =
+            TreemapLayout::compute(&tree, &stats, egui::vec2(800.0, 600.0), tree.root(), None);
         assert_eq!(layout.rects.len(), 2);
         let area_big = layout
             .rects
@@ -754,7 +795,8 @@ mod tests {
         tree.insert(sub, make_file(500), "a.rs");
         tree.insert(sub, make_file(500), "b.rs");
         let stats = SubtreeStats::compute(&tree);
-        let layout = TreemapLayout::compute(&tree, &stats, egui::vec2(800.0, 600.0), tree.root());
+        let layout =
+            TreemapLayout::compute(&tree, &stats, egui::vec2(800.0, 600.0), tree.root(), None);
         assert_eq!(layout.rects.len(), 2);
         // Both files should be present (directory itself is not a rect).
         let indices: Vec<usize> = layout.rects.iter().map(|r| r.node_index).collect();
@@ -768,7 +810,8 @@ mod tests {
         tree.insert(0, make_file(1000), "a.rs");
         tree.insert(0, make_file(0), "empty.rs");
         let stats = SubtreeStats::compute(&tree);
-        let layout = TreemapLayout::compute(&tree, &stats, egui::vec2(800.0, 600.0), tree.root());
+        let layout =
+            TreemapLayout::compute(&tree, &stats, egui::vec2(800.0, 600.0), tree.root(), None);
         assert_eq!(layout.rects.len(), 1);
         assert_eq!(layout.rects[0].node_index, 1);
     }
@@ -777,7 +820,8 @@ mod tests {
     fn layout_empty_directory() {
         let tree = DirTree::new("/root");
         let stats = SubtreeStats::compute(&tree);
-        let layout = TreemapLayout::compute(&tree, &stats, egui::vec2(800.0, 600.0), tree.root());
+        let layout =
+            TreemapLayout::compute(&tree, &stats, egui::vec2(800.0, 600.0), tree.root(), None);
         assert!(layout.rects.is_empty());
     }
 
@@ -789,7 +833,8 @@ mod tests {
         node.extension = ext_idx;
         tree.insert(0, node, "a.rs");
         let stats = SubtreeStats::compute(&tree);
-        let layout = TreemapLayout::compute(&tree, &stats, egui::vec2(800.0, 600.0), tree.root());
+        let layout =
+            TreemapLayout::compute(&tree, &stats, egui::vec2(800.0, 600.0), tree.root(), None);
         let expected = ext_stats::hsl_to_color32(&rds_core::stats::color_for_extension("rs"));
         assert_eq!(layout.rects[0].color, expected);
     }
@@ -799,7 +844,8 @@ mod tests {
         let mut tree = DirTree::new("/root");
         tree.insert(0, make_file(1000), "Makefile");
         let stats = SubtreeStats::compute(&tree);
-        let layout = TreemapLayout::compute(&tree, &stats, egui::vec2(800.0, 600.0), tree.root());
+        let layout =
+            TreemapLayout::compute(&tree, &stats, egui::vec2(800.0, 600.0), tree.root(), None);
         let expected = ext_stats::hsl_to_color32(&rds_core::stats::color_for_extension(""));
         assert_eq!(layout.rects[0].color, expected);
     }
@@ -812,7 +858,8 @@ mod tests {
             tree.insert(0, make_file((i as u64 + 1) * 100), &name);
         }
         let stats = SubtreeStats::compute(&tree);
-        let layout = TreemapLayout::compute(&tree, &stats, egui::vec2(800.0, 600.0), tree.root());
+        let layout =
+            TreemapLayout::compute(&tree, &stats, egui::vec2(800.0, 600.0), tree.root(), None);
         for r in &layout.rects {
             assert!(r.rect.width() > 0.0, "zero-width rect at {:?}", r.rect);
             assert!(r.rect.height() > 0.0, "zero-height rect at {:?}", r.rect);
@@ -824,7 +871,7 @@ mod tests {
         let mut tree = DirTree::new("/root");
         tree.insert(0, make_file(1000), "a.rs");
         let stats = SubtreeStats::compute(&tree);
-        let layout = TreemapLayout::compute(&tree, &stats, egui::vec2(0.0, 0.0), tree.root());
+        let layout = TreemapLayout::compute(&tree, &stats, egui::vec2(0.0, 0.0), tree.root(), None);
         assert!(layout.rects.is_empty());
     }
 
@@ -836,7 +883,8 @@ mod tests {
         let d3 = tree.insert(d2, make_dir(), "d3");
         tree.insert(d3, make_file(1000), "deep.rs");
         let stats = SubtreeStats::compute(&tree);
-        let layout = TreemapLayout::compute(&tree, &stats, egui::vec2(800.0, 600.0), tree.root());
+        let layout =
+            TreemapLayout::compute(&tree, &stats, egui::vec2(800.0, 600.0), tree.root(), None);
         assert_eq!(layout.rects.len(), 1);
         assert_eq!(layout.rects[0].node_index, 4); // deep.rs is index 4
     }
@@ -846,7 +894,7 @@ mod tests {
         let tree = DirTree::new("/root");
         let stats = SubtreeStats::compute(&tree);
         let size = egui::vec2(1024.0, 768.0);
-        let layout = TreemapLayout::compute(&tree, &stats, size, tree.root());
+        let layout = TreemapLayout::compute(&tree, &stats, size, tree.root(), None);
         assert_eq!(layout.last_size, size);
     }
 
@@ -1018,7 +1066,8 @@ mod tests {
         let sub = tree.insert(0, make_dir(), "sub");
         tree.insert(sub, make_file(500), "deep.rs");
         let stats = SubtreeStats::compute(&tree);
-        let layout = TreemapLayout::compute(&tree, &stats, egui::vec2(200.0, 100.0), tree.root());
+        let layout =
+            TreemapLayout::compute(&tree, &stats, egui::vec2(200.0, 100.0), tree.root(), None);
 
         assert_eq!(layout.rects.len(), 2);
         let top = layout.rects.iter().find(|r| r.node_index == 1).unwrap();
@@ -1036,7 +1085,8 @@ mod tests {
         tree.insert(d3, make_file(500), "deep.rs");
         tree.insert(0, make_file(500), "top.rs");
         let stats = SubtreeStats::compute(&tree);
-        let layout = TreemapLayout::compute(&tree, &stats, egui::vec2(200.0, 100.0), tree.root());
+        let layout =
+            TreemapLayout::compute(&tree, &stats, egui::vec2(200.0, 100.0), tree.root(), None);
 
         let deep = layout.rects.iter().find(|r| r.node_index == 4).unwrap();
         let top = layout.rects.iter().find(|r| r.node_index == 5).unwrap();
@@ -1051,7 +1101,8 @@ mod tests {
         tree.insert(sub, make_file(1000), "deep.rs");
         tree.insert(0, make_file(1000), "top.rs");
         let stats = SubtreeStats::compute(&tree);
-        let layout = TreemapLayout::compute(&tree, &stats, egui::vec2(200.0, 100.0), tree.root());
+        let layout =
+            TreemapLayout::compute(&tree, &stats, egui::vec2(200.0, 100.0), tree.root(), None);
 
         let top = layout.rects.iter().find(|r| r.node_index == 3).unwrap();
         let deep = layout.rects.iter().find(|r| r.node_index == 2).unwrap();
@@ -1069,7 +1120,8 @@ mod tests {
         let mut tree = DirTree::new("/root");
         tree.insert(0, make_file(1000), "a.rs");
         let stats = SubtreeStats::compute(&tree);
-        let layout = TreemapLayout::compute(&tree, &stats, egui::vec2(100.0, 100.0), tree.root());
+        let layout =
+            TreemapLayout::compute(&tree, &stats, egui::vec2(100.0, 100.0), tree.root(), None);
 
         let r = &layout.rects[0];
         assert!(r.cushion.a2x != 0.0, "a2x should be non-zero");
@@ -1214,7 +1266,8 @@ mod tests {
 
         // Time the layout computation (includes cushion coefficient accumulation).
         let start = std::time::Instant::now();
-        let layout = TreemapLayout::compute(&tree, &stats, egui::vec2(1920.0, 1080.0), tree.root());
+        let layout =
+            TreemapLayout::compute(&tree, &stats, egui::vec2(1920.0, 1080.0), tree.root(), None);
         let layout_elapsed = start.elapsed();
 
         assert_eq!(layout.rects.len(), 50_000);
@@ -1259,7 +1312,7 @@ mod tests {
         tree.insert(0, make_file(200), "top.txt");
 
         let stats = SubtreeStats::compute(&tree);
-        let layout = TreemapLayout::compute(&tree, &stats, egui::vec2(800.0, 600.0), sub);
+        let layout = TreemapLayout::compute(&tree, &stats, egui::vec2(800.0, 600.0), sub, None);
 
         assert_eq!(layout.rects.len(), 2);
         let indices: Vec<usize> = layout.rects.iter().map(|r| r.node_index).collect();
@@ -1275,7 +1328,7 @@ mod tests {
         let sub = tree.insert(0, make_dir(), "sub");
         tree.insert(sub, make_file(100), "a.rs");
         let stats = SubtreeStats::compute(&tree);
-        let layout = TreemapLayout::compute(&tree, &stats, egui::vec2(800.0, 600.0), sub);
+        let layout = TreemapLayout::compute(&tree, &stats, egui::vec2(800.0, 600.0), sub, None);
         assert_eq!(layout.last_root, sub);
     }
 
@@ -1352,7 +1405,8 @@ mod tests {
             }
         }
         let stats = SubtreeStats::compute(&tree);
-        let layout = TreemapLayout::compute(&tree, &stats, egui::vec2(800.0, 600.0), tree.root());
+        let layout =
+            TreemapLayout::compute(&tree, &stats, egui::vec2(800.0, 600.0), tree.root(), None);
 
         // Rect count should be capped near MAX_DISPLAY_RECTS, with some
         // slack for directories that contribute rects before the cap.
@@ -1379,7 +1433,8 @@ mod tests {
             tree.insert(0, make_file((i as u64 + 1) * 100), &name);
         }
         let stats = SubtreeStats::compute(&tree);
-        let layout = TreemapLayout::compute(&tree, &stats, egui::vec2(800.0, 600.0), tree.root());
+        let layout =
+            TreemapLayout::compute(&tree, &stats, egui::vec2(800.0, 600.0), tree.root(), None);
 
         assert_eq!(layout.rects.len(), 100);
         assert!(
@@ -1401,7 +1456,8 @@ mod tests {
             }
         }
         let stats = SubtreeStats::compute(&tree);
-        let layout = TreemapLayout::compute(&tree, &stats, egui::vec2(800.0, 600.0), tree.root());
+        let layout =
+            TreemapLayout::compute(&tree, &stats, egui::vec2(800.0, 600.0), tree.root(), None);
 
         let aggregated = layout
             .rects
@@ -1425,7 +1481,8 @@ mod tests {
             tree.insert(dir, make_file(1), &name);
         }
         let stats = SubtreeStats::compute(&tree);
-        let layout = TreemapLayout::compute(&tree, &stats, egui::vec2(800.0, 600.0), tree.root());
+        let layout =
+            TreemapLayout::compute(&tree, &stats, egui::vec2(800.0, 600.0), tree.root(), None);
 
         // Sum the area of all rects (both regular and aggregated).
         let total_area: f32 = layout

@@ -36,6 +36,44 @@ pub use tree_view::SubtreeStats;
 #[cfg(feature = "bench-internals")]
 pub use treemap::{MAX_DISPLAY_RECTS, TreemapLayout, TreemapRect};
 
+/// Theme-derived colors resolved once per frame from egui's active visuals.
+/// Ensures consistent appearance across light and dark themes.
+pub(crate) struct ThemeColors {
+    pub treemap_bg: egui::Color32,
+    pub selection_border: egui::Color32,
+    pub aggregated_color: egui::Color32,
+    pub placeholder_text: egui::Color32,
+    pub error_text: egui::Color32,
+    pub success_text: egui::Color32,
+    pub dim_factor: f32,
+}
+
+impl ThemeColors {
+    fn from_visuals(visuals: &egui::Visuals) -> Self {
+        if visuals.dark_mode {
+            Self {
+                treemap_bg: egui::Color32::from_rgb(30, 30, 30),
+                selection_border: egui::Color32::WHITE,
+                aggregated_color: egui::Color32::from_rgb(80, 80, 80),
+                placeholder_text: egui::Color32::GRAY,
+                error_text: egui::Color32::from_rgb(255, 100, 100),
+                success_text: egui::Color32::from_rgb(80, 200, 80),
+                dim_factor: 0.3,
+            }
+        } else {
+            Self {
+                treemap_bg: visuals.faint_bg_color,
+                selection_border: egui::Color32::from_rgb(30, 30, 30),
+                aggregated_color: egui::Color32::from_rgb(200, 200, 200),
+                placeholder_text: visuals.weak_text_color(),
+                error_text: egui::Color32::from_rgb(200, 0, 0),
+                success_text: egui::Color32::from_rgb(0, 140, 0),
+                dim_factor: 0.7,
+            }
+        }
+    }
+}
+
 /// Scan lifecycle phases. (ref: DL-004)
 enum ScanPhase {
     /// No scan running; waiting for user to pick a directory.
@@ -628,6 +666,8 @@ impl eframe::App for RustDirStatApp {
         };
         ctx.set_theme(theme_pref);
 
+        let theme_colors = ThemeColors::from_visuals(&ctx.style().visuals);
+
         // --- Keyboard shortcuts ---
         // Process shortcuts before UI rendering so key events are consumed
         // before text fields or buttons process them.
@@ -737,7 +777,7 @@ impl eframe::App for RustDirStatApp {
                         }
                     });
                     if let Some(ref err) = self.delete_error {
-                        ui.colored_label(egui::Color32::from_rgb(255, 80, 80), err);
+                        ui.colored_label(theme_colors.error_text, err);
                     }
                 });
         }
@@ -763,6 +803,7 @@ impl eframe::App for RustDirStatApp {
             self.treemap_root,
             &self.duplicate_groups,
             &mut self.notifications,
+            &theme_colors,
             ctx,
         );
 
@@ -854,7 +895,7 @@ impl eframe::App for RustDirStatApp {
                 }
 
                 if let Some(ref err) = self.path_error {
-                    ui.colored_label(egui::Color32::from_rgb(255, 100, 100), err);
+                    ui.colored_label(theme_colors.error_text, err);
                 }
 
                 ui.separator();
@@ -997,7 +1038,7 @@ impl eframe::App for RustDirStatApp {
                 // Paint dark background over the entire panel (including frame margins)
                 // so no default grey leaks through gaps in the treemap.
                 ui.painter()
-                    .rect_filled(ui.max_rect(), 0.0, egui::Color32::from_rgb(30, 30, 30));
+                    .rect_filled(ui.max_rect(), 0.0, theme_colors.treemap_bg);
 
                 if let (Some(tree), Some(stats)) = (self.tree.as_ref(), self.subtree_stats.as_ref())
                 {
@@ -1035,6 +1076,7 @@ impl eframe::App for RustDirStatApp {
                             stats,
                             available_size,
                             self.treemap_root,
+                            self.extension_stats.as_deref(),
                         ));
                     }
 
@@ -1052,6 +1094,7 @@ impl eframe::App for RustDirStatApp {
                             &self.custom_commands,
                             &mut self.notifications,
                             &mut self.treemap_mesh_cache,
+                            &theme_colors,
                             ui,
                         );
                         if self.treemap_root != prev_root {
@@ -1060,9 +1103,9 @@ impl eframe::App for RustDirStatApp {
                         }
                     }
                 } else if matches!(self.phase, ScanPhase::Scanning) {
-                    ui.colored_label(egui::Color32::GRAY, "Scan in progress\u{2026}");
+                    ui.colored_label(theme_colors.placeholder_text, "Scan in progress\u{2026}");
                 } else {
-                    ui.colored_label(egui::Color32::GRAY, "No scan data.");
+                    ui.colored_label(theme_colors.placeholder_text, "No scan data.");
                 }
             });
 
@@ -1084,14 +1127,15 @@ impl eframe::App for RustDirStatApp {
                             &self.custom_commands,
                             self.default_sort,
                             &mut self.notifications,
+                            &theme_colors,
                             ui,
                         );
                     }
                     (Some(_), None) => {
-                        ui.colored_label(egui::Color32::GRAY, "Scan in progress\u{2026}");
+                        ui.colored_label(theme_colors.placeholder_text, "Scan in progress\u{2026}");
                     }
                     _ => {
-                        ui.colored_label(egui::Color32::GRAY, "No scan data.");
+                        ui.colored_label(theme_colors.placeholder_text, "No scan data.");
                     }
                 }
             });
@@ -1108,7 +1152,7 @@ impl eframe::App for RustDirStatApp {
                     if self.tree.is_some() {
                         ui.label(format!("{} files scanned", self.files_scanned));
                     } else {
-                        ui.colored_label(egui::Color32::GRAY, "No scan data.");
+                        ui.colored_label(theme_colors.placeholder_text, "No scan data.");
                     }
                 }
             }

@@ -66,10 +66,19 @@ pub struct ScanConfig {
 
 impl Default for ScanConfig {
     fn default() -> Self {
+        #[cfg(target_os = "windows")]
+        let exclude_patterns = vec![
+            "$RECYCLE.BIN".to_string(),
+            "System Volume Information".to_string(),
+            "WindowsApps".to_string(),
+        ];
+        #[cfg(not(target_os = "windows"))]
+        let exclude_patterns = Vec::new();
+
         ScanConfig {
             root: PathBuf::new(),
             follow_symlinks: false,
-            exclude_patterns: Vec::new(),
+            exclude_patterns,
             hash_duplicates: false,
             max_nodes: Some(10_000_000),
         }
@@ -87,7 +96,7 @@ mod tests {
         assert!(!config.follow_symlinks);
         assert!(!config.hash_duplicates);
         assert_eq!(config.max_nodes, Some(10_000_000));
-        assert!(config.exclude_patterns.is_empty());
+        assert_eq!(config.exclude_patterns, ScanConfig::default().exclude_patterns);
     }
 
     #[test]

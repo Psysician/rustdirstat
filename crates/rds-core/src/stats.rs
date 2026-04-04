@@ -20,14 +20,18 @@ pub struct ExtensionStats {
 
 /// Returns a deterministic `HslColor` for `ext`.
 ///
-/// Uses byte-sum modulo 360 rather than `DefaultHasher`. `DefaultHasher` is
-/// randomly seeded per process (Rust 1.36+), so it produces different results
-/// on each app launch. Byte-sum is deterministic across runs, platforms, and
-/// Rust versions. (DL-010)
+/// Uses an FNV-1a hash for better hue distribution across the 0-360 range.
+/// This is a fallback for cases where rank-based golden-ratio colors from
+/// `compute_extension_stats` are not yet available (e.g. during live scan).
+/// Deterministic across runs, platforms, and Rust versions. (DL-010)
 pub fn color_for_extension(ext: &str) -> HslColor {
-    let hue: u64 = ext.as_bytes().iter().map(|&b| b as u64).sum();
+    let mut hash: u64 = 2_166_136_261;
+    for &b in ext.as_bytes() {
+        hash ^= b as u64;
+        hash = hash.wrapping_mul(16_777_619);
+    }
     HslColor {
-        h: (hue % 360) as f64,
+        h: (hash % 360) as f64,
         s: 0.7,
         l: 0.5,
     }
@@ -66,18 +70,33 @@ pub fn compute_extension_stats(tree: &DirTree) -> Vec<ExtensionStats> {
             } else {
                 0.0
             };
-            let color = color_for_extension(&ext);
             ExtensionStats {
                 extension: ext,
                 count,
                 total_bytes,
                 percentage,
-                color,
+                color: HslColor {
+                    h: 0.0,
+                    s: 0.0,
+                    l: 0.0,
+                },
             }
         })
         .collect();
 
     stats.sort_by(|a, b| b.total_bytes.cmp(&a.total_bytes));
+
+    // Assign maximally distinct colors using golden-ratio hue spacing.
+    // Extensions are already sorted by total_bytes descending, so the
+    // most prominent extensions get the most separated hues.
+    for (rank, stat) in stats.iter_mut().enumerate() {
+        stat.color = HslColor {
+            h: (rank as f64 * 137.508) % 360.0,
+            s: 0.7,
+            l: 0.5,
+        };
+    }
+
     stats
 }
 

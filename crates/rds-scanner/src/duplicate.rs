@@ -25,31 +25,32 @@ impl DuplicateDetector {
             return;
         }
 
-        // Phase 1: Group by size, filter zero-byte files, discard unique sizes.
+        // Phase 1: Group by size (unchanged)
         let size_groups = Self::phase1_group_by_size(files);
-        if size_groups.is_empty() {
-            return;
-        }
 
-        if cancel.load(Ordering::Relaxed) {
-            return;
-        }
+        // Process each size group through phases 2-3 independently.
+        // Each group's intermediates are dropped before the next group starts,
+        // reducing peak memory from O(all candidates) to O(largest single size group).
+        for (_size, group) in size_groups {
+            if cancel.load(Ordering::Relaxed) {
+                return;
+            }
 
-        // Phase 2: Partial 4KB SHA-256 hash, discard groups with count < 2.
-        let partial_groups = Self::phase2_partial_hash(&size_groups, cancel);
-        if partial_groups.is_empty() {
-            return;
-        }
+            // Phase 2: Partial hash within this group
+            let partial_groups = Self::phase2_partial_hash_group(&group, cancel);
 
-        if cancel.load(Ordering::Relaxed) {
-            return;
+            // Phase 3: Full hash and emit
+            for hash_group in partial_groups {
+                if cancel.load(Ordering::Relaxed) {
+                    return;
+                }
+                Self::phase3_full_hash_group(&hash_group, tx, cancel);
+            }
+            // group and partial_groups are dropped here, freeing memory
         }
-
-        // Phase 3: Full SHA-256 hash, send DuplicateFound for groups with count >= 2.
-        Self::phase3_full_hash(&partial_groups, tx, cancel);
     }
 
-    fn phase1_group_by_size(files: &[FileEntry]) -> Vec<Vec<&FileEntry>> {
+    fn phase1_group_by_size(files: &[FileEntry]) -> Vec<(u64, Vec<&FileEntry>)> {
         let mut by_size: HashMap<u64, Vec<&FileEntry>> = HashMap::new();
         for entry in files {
             if entry.size == 0 {
@@ -58,19 +59,16 @@ impl DuplicateDetector {
             by_size.entry(entry.size).or_default().push(entry);
         }
         by_size
-            .into_values()
-            .filter(|group| group.len() >= 2)
+            .into_iter()
+            .filter(|(_size, group)| group.len() >= 2)
             .collect()
     }
 
-    fn phase2_partial_hash<'a>(
-        size_groups: &[Vec<&'a FileEntry>],
+    fn phase2_partial_hash_group<'a>(
+        group: &[&'a FileEntry],
         cancel: &Arc<AtomicBool>,
-    ) -> Vec<PartialHashGroup<'a>> {
-        let all_entries: Vec<&FileEntry> =
-            size_groups.iter().flat_map(|g| g.iter().copied()).collect();
-
-        let hashed: Vec<Option<HashedEntry>> = all_entries
+    ) -> Vec<Vec<HashedEntry<'a>>> {
+        let hashed: Vec<Option<HashedEntry>> = group
             .par_iter()
             .map(|entry| {
                 if cancel.load(Ordering::Relaxed) {
@@ -94,30 +92,20 @@ impl DuplicateDetector {
             return Vec::new();
         }
 
-        let mut by_size_and_hash: HashMap<(u64, [u8; 32]), Vec<HashedEntry>> = HashMap::new();
+        let mut by_hash: HashMap<[u8; 32], Vec<HashedEntry>> = HashMap::new();
         for he in hashed.into_iter().flatten() {
-            let key = (he.entry.size, he.partial_hash);
-            by_size_and_hash.entry(key).or_default().push(he);
+            by_hash.entry(he.partial_hash).or_default().push(he);
         }
 
-        by_size_and_hash
-            .into_values()
-            .filter(|group| group.len() >= 2)
-            .map(|entries| PartialHashGroup { entries })
-            .collect()
+        by_hash.into_values().filter(|g| g.len() >= 2).collect()
     }
 
-    fn phase3_full_hash(
-        partial_groups: &[PartialHashGroup<'_>],
+    fn phase3_full_hash_group(
+        group: &[HashedEntry<'_>],
         tx: &Sender<ScanEvent>,
         cancel: &Arc<AtomicBool>,
     ) {
-        let all_entries: Vec<&HashedEntry> = partial_groups
-            .iter()
-            .flat_map(|g| g.entries.iter())
-            .collect();
-
-        let hashed: Vec<Option<(usize, [u8; 32])>> = all_entries
+        let hashed: Vec<Option<(usize, [u8; 32])>> = group
             .par_iter()
             .map(|he| {
                 if cancel.load(Ordering::Relaxed) {
@@ -193,8 +181,4 @@ struct HashedEntry<'a> {
     entry: &'a FileEntry,
     partial_hash: [u8; 32],
     is_full_hash: bool,
-}
-
-struct PartialHashGroup<'a> {
-    entries: Vec<HashedEntry<'a>>,
 }

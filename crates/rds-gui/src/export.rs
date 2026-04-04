@@ -239,6 +239,7 @@ pub(crate) fn show_dialog(
     treemap_root: usize,
     duplicate_groups: &[crate::DuplicateGroup],
     notifications: &mut crate::notifications::Notifications,
+    theme_colors: &crate::ThemeColors,
     ctx: &egui::Context,
 ) {
     if !state.show {
@@ -340,12 +341,12 @@ pub(crate) fn show_dialog(
                 match result {
                     ExportResult::Success { record_count, path } => {
                         ui.colored_label(
-                            egui::Color32::from_rgb(80, 200, 80),
+                            theme_colors.success_text,
                             format!("Exported {record_count} records to {path}"),
                         );
                     }
                     ExportResult::Error(msg) => {
-                        ui.colored_label(egui::Color32::from_rgb(255, 80, 80), msg);
+                        ui.colored_label(theme_colors.error_text, msg);
                     }
                 }
             }

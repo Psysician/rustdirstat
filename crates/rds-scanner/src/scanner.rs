@@ -14,6 +14,39 @@ use tracing::{debug, info_span, warn};
 
 use crate::duplicate::DuplicateDetector;
 
+/// Returns true if the filename is a Windows reserved device name.
+/// These cause OS error 1 ("Incorrect function") when metadata is accessed.
+#[cfg(target_os = "windows")]
+fn is_windows_reserved_name(name: &str) -> bool {
+    let stem = name.split('.').next().unwrap_or(name);
+    let upper = stem.to_uppercase();
+    matches!(
+        upper.as_str(),
+        "CON"
+            | "PRN"
+            | "AUX"
+            | "NUL"
+            | "COM1"
+            | "COM2"
+            | "COM3"
+            | "COM4"
+            | "COM5"
+            | "COM6"
+            | "COM7"
+            | "COM8"
+            | "COM9"
+            | "LPT1"
+            | "LPT2"
+            | "LPT3"
+            | "LPT4"
+            | "LPT5"
+            | "LPT6"
+            | "LPT7"
+            | "LPT8"
+            | "LPT9"
+    )
+}
+
 pub struct FileEntry {
     pub path: PathBuf,
     pub arena_index: usize,
@@ -330,6 +363,8 @@ impl Scanner {
                 );
             }
 
+            drop(path_to_index);
+
             if let Some(ref entries) = file_entries
                 && !cancel.load(Ordering::Relaxed)
             {
@@ -429,20 +464,27 @@ impl Scanner {
                 // removed. Runs on rayon threads before entries are yielded by
                 // the iterator, so excluded directories never have their children
                 // read (`read_children_path = None`).
-                if !exclude_flag.is_empty() {
-                    children.retain_mut(|entry_result| {
-                        let entry = match entry_result {
-                            Ok(e) => e,
-                            Err(_) => return true,
-                        };
-                        let name = entry.file_name.to_string_lossy();
-                        if exclude_flag.iter().any(|p| p.matches(&name)) {
+                children.retain_mut(|entry_result| {
+                    let entry = match entry_result {
+                        Ok(e) => e,
+                        Err(_) => return true,
+                    };
+                    let name = entry.file_name.to_string_lossy();
+
+                    #[cfg(target_os = "windows")]
+                    {
+                        if is_windows_reserved_name(&name) {
                             entry.read_children_path = None;
                             return false;
                         }
-                        true
-                    });
-                }
+                    }
+
+                    if !exclude_flag.is_empty() && exclude_flag.iter().any(|p| p.matches(&name)) {
+                        entry.read_children_path = None;
+                        return false;
+                    }
+                    true
+                });
             });
 
         for entry_result in walker {

@@ -1,3 +1,4 @@
+#![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 //! Binary entry point. Parses CLI arguments, initialises tracing, loads
 //! persistent configuration, and launches the eframe window. All scanning
 //! and rendering logic lives in rds-scanner and rds-gui.
@@ -77,10 +78,12 @@ fn save_config(config: &AppConfig, path: &Path) {
 
 /// Runs scan-only mode: scans the given path without launching the GUI,
 /// prints scan stats to stdout, and exits.
-fn run_scan_only(path: PathBuf) {
+fn run_scan_only(path: PathBuf, app_config: &AppConfig) {
     let config = ScanConfig {
         root: path,
         hash_duplicates: false,
+        exclude_patterns: app_config.exclude_patterns.clone(),
+        follow_symlinks: app_config.follow_symlinks,
         ..ScanConfig::default()
     };
 
@@ -134,13 +137,13 @@ fn main() -> eframe::Result {
         )
         .init();
 
+    let (config, config_path) = load_config();
+
     if cli.scan_only {
         let path = cli.path.unwrap_or_else(|| PathBuf::from("."));
-        run_scan_only(path);
+        run_scan_only(path, &config);
         return Ok(());
     }
-
-    let (config, config_path) = load_config();
 
     let icon_image = image::load_from_memory(include_bytes!("../assets/icon-256.png"))
         .expect("embedded icon is valid PNG")
@@ -215,7 +218,7 @@ mod tests {
         let config: AppConfig = toml::from_str(partial).expect("deserialize partial TOML");
 
         assert_eq!(config.color_scheme, ColorScheme::Default);
-        assert!(config.exclude_patterns.is_empty());
+        assert_eq!(config.exclude_patterns, AppConfig::default().exclude_patterns);
         assert!(config.custom_commands.is_empty());
         assert_eq!(config.default_sort, SortOrder::SizeDesc);
         assert!(config.recent_paths.is_empty());
