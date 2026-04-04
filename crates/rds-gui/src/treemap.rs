@@ -21,6 +21,15 @@ const MIN_RECT_DIM: f32 = 1.0;
 /// "other" buckets to keep rendering under budget.
 pub const MAX_DISPLAY_RECTS: usize = 50_000;
 
+/// Directories with fewer items than this are never aggregated at the soft
+/// cap. Adding a few dozen rects to the 50k budget has negligible GPU cost,
+/// but aggregating 16 large files into a grey block destroys useful info.
+const MIN_ITEMS_TO_AGGREGATE: usize = 100;
+
+/// Absolute ceiling on total rects. Once reached, ALL directories aggregate
+/// regardless of size. Prevents runaway growth from deeply nested small dirs.
+const HARD_RECT_LIMIT: usize = MAX_DISPLAY_RECTS + 5_000;
+
 /// Minimum rectangle dimension for cushion shading. Rects smaller
 /// than this in either dimension get flat fills. (ref: DL-005)
 const MIN_CUSHION_DIM: f32 = 4.0;
@@ -322,9 +331,13 @@ fn compute_recursive(
         |item, r| item.rect = r,
     );
 
-    // If we already hit the cap, merge ALL items in this directory into
-    // a single "other" bucket covering the full bounds.
-    if *rect_count >= MAX_DISPLAY_RECTS {
+    // If we already hit the cap, merge items into a single "other" bucket.
+    // Small directories (< MIN_ITEMS_TO_AGGREGATE) are always rendered
+    // individually so large files are never hidden behind an aggregated block.
+    // The HARD_RECT_LIMIT is an absolute ceiling that always triggers.
+    let over_hard_limit = *rect_count >= HARD_RECT_LIMIT;
+    let over_soft_limit = *rect_count >= MAX_DISPLAY_RECTS && items.len() >= MIN_ITEMS_TO_AGGREGATE;
+    if over_hard_limit || over_soft_limit {
         let file_count = items.len() as u64;
         let total_bytes: u64 = items.iter().map(|i| i.size as u64).sum();
         result.push(TreemapRect {
@@ -333,7 +346,7 @@ fn compute_recursive(
                 egui::pos2(bounds.x, bounds.y),
                 egui::vec2(bounds.w, bounds.h),
             ),
-            color: egui::Color32::from_rgb(80, 80, 80),
+            color: egui::Color32::TRANSPARENT, // overridden by ThemeColors.aggregated_color in build_mesh_cache
             depth,
             cushion: parent_cushion,
             aggregated_count: Some((file_count, total_bytes)),
@@ -384,9 +397,13 @@ fn compute_recursive(
             *rect_count += 1;
         }
 
-        // If we hit the cap mid-loop, merge all REMAINING items into
-        // a single "other" bucket.
-        if *rect_count >= MAX_DISPLAY_RECTS && i + 1 < items.len() {
+        // If we hit the cap mid-loop, merge REMAINING items into a single
+        // "other" bucket. Same two-tier logic: small remainders are kept.
+        let remaining_count = items.len() - (i + 1);
+        let mid_hard = *rect_count >= HARD_RECT_LIMIT && remaining_count > 0;
+        let mid_soft =
+            *rect_count >= MAX_DISPLAY_RECTS && remaining_count >= MIN_ITEMS_TO_AGGREGATE;
+        if mid_hard || mid_soft {
             let remaining = &items[i + 1..];
             let file_count = remaining.len() as u64;
             let total_bytes: u64 = remaining.iter().map(|r| r.size as u64).sum();
@@ -1408,12 +1425,13 @@ mod tests {
         let layout =
             TreemapLayout::compute(&tree, &stats, egui::vec2(800.0, 600.0), tree.root(), None);
 
-        // Rect count should be capped near MAX_DISPLAY_RECTS, with some
-        // slack for directories that contribute rects before the cap.
+        // Rect count should be capped near HARD_RECT_LIMIT. Small dirs
+        // (< MIN_ITEMS_TO_AGGREGATE) may render past the soft cap but the
+        // hard ceiling is never exceeded.
         assert!(
-            layout.rects.len() <= MAX_DISPLAY_RECTS + 200,
+            layout.rects.len() <= HARD_RECT_LIMIT + 200,
             "expected <= {} rects, got {}",
-            MAX_DISPLAY_RECTS + 200,
+            HARD_RECT_LIMIT + 200,
             layout.rects.len(),
         );
 

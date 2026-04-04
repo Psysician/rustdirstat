@@ -47,6 +47,19 @@ fn is_windows_reserved_name(name: &str) -> bool {
     )
 }
 
+/// Returns true if the path component is a Windows system directory that
+/// should always be skipped. These directories are protected by the OS and
+/// attempting to read them produces OS error 5 (access denied).
+/// Hardcoded here (not in config) so they are excluded even when the user
+/// has a pre-existing config file with empty exclude_patterns.
+/// Case-insensitive to match NTFS semantics.
+#[cfg(target_os = "windows")]
+fn is_windows_system_dir(name: &str) -> bool {
+    name.eq_ignore_ascii_case("$RECYCLE.BIN")
+        || name.eq_ignore_ascii_case("System Volume Information")
+        || name.eq_ignore_ascii_case("WindowsApps")
+}
+
 pub struct FileEntry {
     pub path: PathBuf,
     pub arena_index: usize,
@@ -473,7 +486,7 @@ impl Scanner {
 
                     #[cfg(target_os = "windows")]
                     {
-                        if is_windows_reserved_name(&name) {
+                        if is_windows_reserved_name(&name) || is_windows_system_dir(&name) {
                             entry.read_children_path = None;
                             return false;
                         }

@@ -54,7 +54,7 @@ impl ThemeColors {
             Self {
                 treemap_bg: egui::Color32::from_rgb(30, 30, 30),
                 selection_border: egui::Color32::WHITE,
-                aggregated_color: egui::Color32::from_rgb(80, 80, 80),
+                aggregated_color: egui::Color32::from_rgb(70, 100, 130),
                 placeholder_text: egui::Color32::GRAY,
                 error_text: egui::Color32::from_rgb(255, 100, 100),
                 success_text: egui::Color32::from_rgb(80, 200, 80),
@@ -64,7 +64,7 @@ impl ThemeColors {
             Self {
                 treemap_bg: visuals.faint_bg_color,
                 selection_border: egui::Color32::from_rgb(30, 30, 30),
-                aggregated_color: egui::Color32::from_rgb(200, 200, 200),
+                aggregated_color: egui::Color32::from_rgb(140, 170, 200),
                 placeholder_text: visuals.weak_text_color(),
                 error_text: egui::Color32::from_rgb(200, 0, 0),
                 success_text: egui::Color32::from_rgb(0, 140, 0),

@@ -96,7 +96,10 @@ mod tests {
         assert!(!config.follow_symlinks);
         assert!(!config.hash_duplicates);
         assert_eq!(config.max_nodes, Some(10_000_000));
-        assert_eq!(config.exclude_patterns, ScanConfig::default().exclude_patterns);
+        assert_eq!(
+            config.exclude_patterns,
+            ScanConfig::default().exclude_patterns
+        );
     }
 
     #[test]

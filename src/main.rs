@@ -218,7 +218,10 @@ mod tests {
         let config: AppConfig = toml::from_str(partial).expect("deserialize partial TOML");
 
         assert_eq!(config.color_scheme, ColorScheme::Default);
-        assert_eq!(config.exclude_patterns, AppConfig::default().exclude_patterns);
+        assert_eq!(
+            config.exclude_patterns,
+            AppConfig::default().exclude_patterns
+        );
         assert!(config.custom_commands.is_empty());
         assert_eq!(config.default_sort, SortOrder::SizeDesc);
         assert!(config.recent_paths.is_empty());

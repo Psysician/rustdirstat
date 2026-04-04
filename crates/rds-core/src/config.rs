@@ -98,7 +98,10 @@ mod tests {
     #[test]
     fn app_config_defaults() {
         let config = AppConfig::default();
-        assert_eq!(config.exclude_patterns, AppConfig::default().exclude_patterns);
+        assert_eq!(
+            config.exclude_patterns,
+            AppConfig::default().exclude_patterns
+        );
         assert!(config.custom_commands.is_empty());
         assert_eq!(config.color_scheme, ColorScheme::Default);
         assert_eq!(config.default_sort, SortOrder::SizeDesc);
