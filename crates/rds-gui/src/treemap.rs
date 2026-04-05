@@ -17,14 +17,11 @@ use rds_core::tree::DirTree;
 const MIN_RECT_DIM: f32 = 1.0;
 
 /// Maximum number of display rectangles before aggregation kicks in.
-/// Scans with more leaf files than this will merge excess items into
-/// "other" buckets to keep rendering under budget.
-pub const MAX_DISPLAY_RECTS: usize = 50_000;
-
-/// Directories with fewer items than this are never aggregated at the soft
-/// cap. Adding a few dozen rects to the 50k budget has negligible GPU cost,
-/// but aggregating 16 large files into a grey block destroys useful info.
-const MIN_ITEMS_TO_AGGREGATE: usize = 100;
+/// Maximum rects before aggregation kicks in. Set to 10M (matching
+/// the scanner's max_nodes limit) to effectively disable aggregation.
+/// Modern GPUs handle millions of triangles; the scanner's node cap
+/// is the real bound on tree size.
+pub const MAX_DISPLAY_RECTS: usize = 10_000_000;
 
 /// Minimum rectangle dimension for cushion shading. Rects smaller
 /// than this in either dimension get flat fills. (ref: DL-005)
@@ -327,10 +324,8 @@ fn compute_recursive(
         |item, r| item.rect = r,
     );
 
-    // If we already hit the cap, merge items into a single "other" bucket.
-    // Small directories (< MIN_ITEMS_TO_AGGREGATE) are always rendered
-    // individually so large files are never hidden behind an aggregated block.
-    if *rect_count >= MAX_DISPLAY_RECTS && items.len() >= MIN_ITEMS_TO_AGGREGATE {
+    // If we hit the cap, merge items into a single "other" bucket.
+    if *rect_count >= MAX_DISPLAY_RECTS {
         let file_count = items.len() as u64;
         let total_bytes: u64 = items.iter().map(|i| i.size as u64).sum();
         result.push(TreemapRect {
@@ -390,10 +385,8 @@ fn compute_recursive(
             *rect_count += 1;
         }
 
-        // If we hit the cap mid-loop, merge REMAINING items into a single
-        // "other" bucket. Only aggregate when many items remain.
-        let remaining_count = items.len() - (i + 1);
-        if *rect_count >= MAX_DISPLAY_RECTS && remaining_count >= MIN_ITEMS_TO_AGGREGATE {
+        // If we hit the cap mid-loop, merge REMAINING items.
+        if *rect_count >= MAX_DISPLAY_RECTS && i + 1 < items.len() {
             let remaining = &items[i + 1..];
             let file_count = remaining.len() as u64;
             let total_bytes: u64 = remaining.iter().map(|r| r.size as u64).sum();
@@ -1415,20 +1408,12 @@ mod tests {
         let layout =
             TreemapLayout::compute(&tree, &stats, egui::vec2(800.0, 600.0), tree.root(), None);
 
-        // Rect count should be capped near MAX_DISPLAY_RECTS. All dirs in
-        // this test have 500 items (>= MIN_ITEMS_TO_AGGREGATE), so the
-        // soft cap aggregates them normally.
+        // 200 dirs × 500 files = 100k leaf files. With MAX_DISPLAY_RECTS at
+        // 10M, no aggregation occurs — all files render individually.
+        assert_eq!(layout.rects.len(), 100_000);
         assert!(
-            layout.rects.len() <= MAX_DISPLAY_RECTS + 500,
-            "expected <= {} rects, got {}",
-            MAX_DISPLAY_RECTS + 500,
-            layout.rects.len(),
-        );
-
-        // At least one aggregated rect should exist.
-        assert!(
-            layout.rects.iter().any(|r| r.aggregated_count.is_some()),
-            "expected at least one aggregated rect",
+            layout.rects.iter().all(|r| r.aggregated_count.is_none()),
+            "no aggregation expected below 10M cap",
         );
     }
 
@@ -1452,8 +1437,8 @@ mod tests {
     }
 
     #[test]
-    fn aggregated_rect_has_sentinel_index() {
-        // 200 dirs x 500 files = 100,000 — triggers aggregation.
+    fn large_tree_renders_all_files() {
+        // 200 dirs x 500 files = 100,000. With 10M cap, all render individually.
         let mut tree = DirTree::new("/root");
         for d in 0..200 {
             let dir_name = format!("dir_{d}");
@@ -1467,20 +1452,15 @@ mod tests {
         let layout =
             TreemapLayout::compute(&tree, &stats, egui::vec2(800.0, 600.0), tree.root(), None);
 
-        let aggregated = layout
-            .rects
-            .iter()
-            .find(|r| r.aggregated_count.is_some())
-            .expect("should have at least one aggregated rect");
-        assert_eq!(
-            aggregated.node_index,
-            usize::MAX,
-            "aggregated rect should use sentinel index",
+        assert_eq!(layout.rects.len(), 100_000);
+        assert!(
+            layout.rects.iter().all(|r| r.aggregated_count.is_none()),
+            "no aggregation expected",
         );
     }
 
     #[test]
-    fn aggregated_rect_size_sum_matches() {
+    fn large_single_dir_area_sums() {
         // 1 directory with 60,000 files of size 1 each.
         let mut tree = DirTree::new("/root");
         let dir = tree.insert(0, make_dir(), "big_dir");
@@ -1492,15 +1472,15 @@ mod tests {
         let layout =
             TreemapLayout::compute(&tree, &stats, egui::vec2(800.0, 600.0), tree.root(), None);
 
-        // Sum the area of all rects (both regular and aggregated).
+        assert_eq!(layout.rects.len(), 60_000);
+
+        // Total area should approximately equal the treemap bounds area.
         let total_area: f32 = layout
             .rects
             .iter()
             .map(|r| r.rect.width() * r.rect.height())
             .sum();
         let bounds_area = 800.0 * 600.0;
-
-        // Total area should approximately equal the treemap bounds area.
         let ratio = total_area / bounds_area;
         assert!(
             (0.95..=1.05).contains(&ratio),

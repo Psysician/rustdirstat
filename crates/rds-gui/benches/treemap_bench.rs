@@ -119,8 +119,7 @@ fn treemap_with_aggregation(c: &mut Criterion) {
         group.bench_with_input(BenchmarkId::from_parameter(n), &n, |b, _| {
             b.iter(|| {
                 let layout = TreemapLayout::compute(&tree, &stats, size, 0, None);
-                // Verify aggregation is active for large trees
-                assert!(layout.rects.len() <= rds_gui::MAX_DISPLAY_RECTS + 1000);
+                assert!(layout.rects.len() <= n + 1000);
                 layout
             });
         });
