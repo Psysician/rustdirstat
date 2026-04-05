@@ -38,7 +38,7 @@ image = { version = "0.25", default-features = false, features = ["png"] }
 # and rendering to rds-scanner and rds-gui respectively.
 [package]
 name = "rustdirstat"
-version = "0.1.0"
+version = "1.0.0-beta"
 edition = "2024"
 license = "MIT"
 description = "Cross-platform disk usage analyzer with interactive treemap visualization"

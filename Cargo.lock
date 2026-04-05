@@ -3107,7 +3107,7 @@ dependencies = [
 
 [[package]]
 name = "rds-core"
-version = "0.1.0"
+version = "1.0.0-beta"
 dependencies = [
  "criterion",
  "serde",
@@ -3116,7 +3116,7 @@ dependencies = [
 
 [[package]]
 name = "rds-gui"
-version = "0.1.0"
+version = "1.0.0-beta"
 dependencies = [
  "criterion",
  "crossbeam-channel",
@@ -3138,7 +3138,7 @@ dependencies = [
 
 [[package]]
 name = "rds-scanner"
-version = "0.1.0"
+version = "1.0.0-beta"
 dependencies = [
  "crossbeam-channel",
  "glob",
@@ -3270,7 +3270,7 @@ dependencies = [
 
 [[package]]
 name = "rustdirstat"
-version = "0.1.0"
+version = "1.0.0-beta"
 dependencies = [
  "clap",
  "crossbeam-channel",
