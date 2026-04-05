@@ -26,10 +26,6 @@ pub const MAX_DISPLAY_RECTS: usize = 50_000;
 /// but aggregating 16 large files into a grey block destroys useful info.
 const MIN_ITEMS_TO_AGGREGATE: usize = 100;
 
-/// Absolute ceiling on total rects. Once reached, ALL directories aggregate
-/// regardless of size. Prevents runaway growth from deeply nested small dirs.
-const HARD_RECT_LIMIT: usize = MAX_DISPLAY_RECTS + 5_000;
-
 /// Minimum rectangle dimension for cushion shading. Rects smaller
 /// than this in either dimension get flat fills. (ref: DL-005)
 const MIN_CUSHION_DIM: f32 = 4.0;
@@ -334,10 +330,7 @@ fn compute_recursive(
     // If we already hit the cap, merge items into a single "other" bucket.
     // Small directories (< MIN_ITEMS_TO_AGGREGATE) are always rendered
     // individually so large files are never hidden behind an aggregated block.
-    // The HARD_RECT_LIMIT is an absolute ceiling that always triggers.
-    let over_hard_limit = *rect_count >= HARD_RECT_LIMIT;
-    let over_soft_limit = *rect_count >= MAX_DISPLAY_RECTS && items.len() >= MIN_ITEMS_TO_AGGREGATE;
-    if over_hard_limit || over_soft_limit {
+    if *rect_count >= MAX_DISPLAY_RECTS && items.len() >= MIN_ITEMS_TO_AGGREGATE {
         let file_count = items.len() as u64;
         let total_bytes: u64 = items.iter().map(|i| i.size as u64).sum();
         result.push(TreemapRect {
@@ -398,12 +391,9 @@ fn compute_recursive(
         }
 
         // If we hit the cap mid-loop, merge REMAINING items into a single
-        // "other" bucket. Same two-tier logic: small remainders are kept.
+        // "other" bucket. Only aggregate when many items remain.
         let remaining_count = items.len() - (i + 1);
-        let mid_hard = *rect_count >= HARD_RECT_LIMIT && remaining_count > 0;
-        let mid_soft =
-            *rect_count >= MAX_DISPLAY_RECTS && remaining_count >= MIN_ITEMS_TO_AGGREGATE;
-        if mid_hard || mid_soft {
+        if *rect_count >= MAX_DISPLAY_RECTS && remaining_count >= MIN_ITEMS_TO_AGGREGATE {
             let remaining = &items[i + 1..];
             let file_count = remaining.len() as u64;
             let total_bytes: u64 = remaining.iter().map(|r| r.size as u64).sum();
@@ -1425,13 +1415,13 @@ mod tests {
         let layout =
             TreemapLayout::compute(&tree, &stats, egui::vec2(800.0, 600.0), tree.root(), None);
 
-        // Rect count should be capped near HARD_RECT_LIMIT. Small dirs
-        // (< MIN_ITEMS_TO_AGGREGATE) may render past the soft cap but the
-        // hard ceiling is never exceeded.
+        // Rect count should be capped near MAX_DISPLAY_RECTS. All dirs in
+        // this test have 500 items (>= MIN_ITEMS_TO_AGGREGATE), so the
+        // soft cap aggregates them normally.
         assert!(
-            layout.rects.len() <= HARD_RECT_LIMIT + 200,
+            layout.rects.len() <= MAX_DISPLAY_RECTS + 500,
             "expected <= {} rects, got {}",
-            HARD_RECT_LIMIT + 200,
+            MAX_DISPLAY_RECTS + 500,
             layout.rects.len(),
         );
 
